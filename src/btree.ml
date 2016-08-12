@@ -187,9 +187,27 @@ type op =
 
 module Make (Key:Key_sig) (Val:Val_sig) = struct  
 
-  type t = {
-    m : int;
-  } 
+  type invariant_violation = 
+    | K_can_never_be_zero 
+    | Subtrees_access_in_leaf_node
+
+  let string_of_invariant_violation = function
+    | K_can_never_be_zero -> "[k] can never be zero" 
+    | Subtrees_access_in_leaf_node -> "[subtrees] are empty in leaf node"
+
+  exception Failure of invariant_violation
+
+  let () = 
+    Printexc.register_printer (function 
+      | Failure iv -> Some (string_of_invariant_violation iv)
+      | _ -> None 
+    ) 
+
+  let k_can_never_be_zero () = 
+    raise (Failure K_can_never_be_zero) 
+
+  let subtrees_access_in_leaf_node () = 
+    raise (Failure Subtrees_access_in_leaf_node)
 
   module Keys = Array_or_bytes(Key) 
   module Vals = Array_or_bytes(Val)
@@ -201,29 +219,28 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       (* offset in the database file, unique id *)
 
     k: int; 
-      (* number of subtrees hold by this node *)
+      (* *)
 
     m: int;
+      (* dimension of the btree node (maximum number of 
+       * subtree) *)
 
     keys: Keys.t; 
       (* [k-1] keys encoded. 
          However bytes length is based on the largest number of keys 
          a node can hold:
-         [ (m-1) * Key.length ]
-       *)
+         [ (m-1) * Key.length ] *)
 
     vals : Vals.t; 
       (* [k-1] data encoded. 
          However bytes length is based on the largest number of keys 
          a node can hold:
-         [ (m-1) * Val.length ]
-       *)
+         [ (m-1) * Val.length ] *)
 
     subtrees: Ints.t;
        (* k substrees binary encoded. 
           
-          A subtree is simply a file offset [int] and is encoded using 4 bytes.  
-        *)
+          A subtree is simply a file offset [int] and is encoded using 4 bytes.  *)
   }
   (** B-Tree node which binary layout has the following:
      
@@ -231,6 +248,19 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
       [lengh = 4 + ((m-1) * Key.length) + ((m-1) * Val.length) + (m * 4)] 
     *)
+  
+
+  let is_leaf k = 
+    (* we use the sign of k to determine whether the node is a
+       leaf node or an intermediate node *)
+    k < 0 
+
+  let nb_of_vals = Pervasives.abs  
+
+  let nb_of_subtrees k = 
+    if k < 0 
+    then subtrees_access_in_leaf_node ()
+    else k + 1 
 
   let keys_offset offset _ = 
     offset + Int.length
@@ -249,7 +279,6 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
   let subtrees_length m = 
     m * Int.length
-
 
   let keys_block offset m = {
     offset = keys_offset offset m;
@@ -272,26 +301,88 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
   let node_length {m; _} = 
      node_length_of_m m  
 
-  let make_node ?keys ?vals ?subtrees ~offset ~k ~m () = 
-    let keys = match keys with
-      | None -> 
-        Keys.on_disk ~offset:(keys_offset offset m) ~length:(keys_length m) ()
-      | Some x -> x 
-    in 
+  type make_result = 
+    | Make_result_node of node 
+    | Make_result_invalid_number_of_values
+    | Make_result_inconsistent_vals_keys 
 
-    let vals = match vals with
-      | None -> 
-        Vals.on_disk ~offset:(vals_offset offset m) ~length:(vals_length m) ()
-      | Some x -> x 
-    in 
+  let make_leaf_node ?keys ?vals ~offset ~nb_of_vals ~m () = 
+    if nb_of_vals > m - 1 || nb_of_vals < 1  
+    then Make_result_invalid_number_of_values
+    else 
+      let k = - nb_of_vals in  
 
-    let subtrees = match subtrees with
-      | None -> 
+      let subtrees = 
         Ints.on_disk ~offset:(subtrees_offset offset m) ~length:(subtrees_length m) ()
-      | Some x -> x 
-    in 
+      in 
 
-    {offset; k; m; keys; vals; subtrees;} 
+      let make keys vals = 
+        Make_result_node {m;offset;k;keys;vals;subtrees}
+      in
+
+      match keys, vals with
+      | None, None -> 
+        let keys = 
+          Keys.on_disk ~offset:(keys_offset offset m) ~length:(keys_length m) () 
+        in
+        let vals = 
+          Vals.on_disk ~offset:(vals_offset offset m) ~length:(vals_length m) () 
+        in 
+        make keys vals 
+
+      | Some keys, Some vals -> 
+        if Array.length keys <> Array.length vals 
+        then Make_result_inconsistent_vals_keys 
+        else 
+          let keys = Keys.array keys in 
+          let vals = Vals.array vals in 
+          make keys vals
+
+      | _ -> Make_result_inconsistent_vals_keys
+
+  let make_intermediate_node ?keys ?vals ?subtrees ~offset ~nb_of_vals ~m () = 
+    if nb_of_vals > m - 1 || nb_of_vals < 1  
+    then Make_result_invalid_number_of_values
+    else 
+      let k = nb_of_vals in 
+      let make keys vals subtrees = 
+        Make_result_node {m;k;offset;keys;vals;subtrees}
+      in 
+      match keys, vals, subtrees with
+      | None, None, None -> 
+        let keys = 
+          Keys.on_disk ~offset:(keys_offset offset m) ~length:(keys_length m) () 
+        in
+        let vals = 
+          Vals.on_disk ~offset:(vals_offset offset m) ~length:(vals_length m) () 
+        in 
+        let subtrees = 
+          Ints.on_disk ~offset:(subtrees_offset offset m) ~length:(subtrees_length m) () 
+        in 
+        make keys vals subtrees
+      | Some keys, Some vals, Some subtrees -> 
+        if Array.length keys <> Array.length vals || 
+           Array.length keys <> (Array.length subtrees - 1)
+        then 
+          Make_result_inconsistent_vals_keys
+        else 
+          let keys = Keys.array keys in 
+          let vals = Vals.array vals in 
+          let subtrees = Ints.array subtrees in 
+          make keys vals subtrees
+      | _ -> Make_result_inconsistent_vals_keys
+
+  let make_disk_node ~k ~m ~offset () = 
+    let keys = 
+      Keys.on_disk ~offset:(keys_offset offset m) ~length:(keys_length m) () 
+    in
+    let vals = 
+      Vals.on_disk ~offset:(vals_offset offset m) ~length:(vals_length m) () 
+    in 
+    let subtrees = 
+      Ints.on_disk ~offset:(subtrees_offset offset m) ~length:(subtrees_length m) () 
+    in 
+    {k;m;offset;keys;vals;subtrees;}
 
   let full_write {offset; k; m; keys; vals; subtrees; } = 
     let writes = [] in
@@ -325,8 +416,6 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
     List.rev writes 
 
-  let nb_of_keys k = match k with | 1 -> 1 | k -> k - 1 
-
   type find_res = 
     | Find_res_not_found 
     | Find_res_val of Val.t 
@@ -340,21 +429,22 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     match Keys.to_array keys with
     | Keys.To_array_on_disk block -> 
       let continutation = fun bytes -> 
-        let node = {node with keys = Keys.bytes ~n:(nb_of_keys k) ~bytes ()} in 
+        let node = {node with keys = Keys.bytes ~n:(nb_of_vals k) ~bytes ()} in 
         find node key 
       in 
       Find_res_read_data (block, continutation) 
 
-    | Keys.To_array_val a -> 
-      if k = 1 
+    | Keys.To_array_val keys_array -> 
+      if is_leaf k
       then (* this is a leaf node *)
-        find_leaf_node node key a 
+        find_leaf_node node key keys_array
       else 
-        find_leaf_internal_node node key a 
+        find_leaf_internal_node node key keys_array
 
   and find_leaf_internal_node ({k; _ } as node) key keys_array = 
+    let nb_of_keys = nb_of_vals k in 
     let rec aux = function
-      | i when i = k - 1 -> find_in_subtree node key i 
+      | i when i = nb_of_keys -> find_in_subtree node key i 
       | i -> 
         let key' = Array.get keys_array i in
         match Key.compare key' key with
@@ -368,7 +458,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     match Ints.to_array subtrees with
     | Ints.To_array_on_disk block -> 
       let continutation = fun bytes -> 
-         let subtree_array = Ints.to_array_from_bytes k bytes in 
+         let subtree_array = Ints.to_array_from_bytes (nb_of_subtrees k) bytes in 
          let node = {node with subtrees = Ints.array subtree_array} in 
          find_in_subtree node key subtree_i
       in 
@@ -379,7 +469,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       let subtree_offset = Array.get subtree_a subtree_i in 
       let continutation = fun bytes -> 
         let k = Int.of_bytes bytes 0 in 
-        let node = make_node ~k ~m ~offset:subtree_offset () in 
+        let node = make_disk_node ~k ~m ~offset:subtree_offset () in 
         find node key 
       in 
 
@@ -389,16 +479,24 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       ) 
   
   and find_leaf_node node key keys_array =  
-    let key' = Array.get keys_array 0 in 
-    Printf.printf "find_leaf_node, key: %s, key': %s\n" 
-      (Key.to_string key) (Key.to_string key');
-    if key = Array.get keys_array 0
-    then (* value found *)
-      return_val_at node 0 
-    else 
-      (* key of the leaf node is not matching, the key is 
-       * therefore not found. *)
-      Find_res_not_found
+    let nb_of_keys = Array.length keys_array in 
+      (* check invariant with [node.k] *)
+
+    let rec aux = function
+      | i when i = nb_of_keys -> 
+        Find_res_not_found
+        (* key of the leaf node is not matching, the key is 
+         * therefore not found. *)
+
+      | i -> 
+        let key' = Array.get keys_array i in 
+        Printf.printf "In leaf node, key: %s, key': %s\n" 
+          (Key.to_string key) (Key.to_string key');
+        if key = key' 
+        then return_val_at node i 
+        else aux (i + 1) 
+    in
+    aux 0
   
   and return_val_at {vals;k; _} i = 
     match Vals.to_array vals with
@@ -406,7 +504,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       (* The values data was not read from disk, let's make sure
        * this is done first *)
       let continuation = fun bytes -> 
-        let vals_array = Vals.to_array_from_bytes (nb_of_keys k) bytes in 
+        let vals_array = Vals.to_array_from_bytes (nb_of_vals k) bytes in 
         Find_res_val (Array.get vals_array i) 
         (* Note we could have recursively called this [find] function
          * but it would have been ineficient and not that much more 
@@ -416,6 +514,6 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
     | Vals.To_array_val a -> 
       (* Values are already read from disk, simply return it *)
-      Find_res_val (Array.get a 0)
+      Find_res_val (Array.get a i)
 
 end 

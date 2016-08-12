@@ -78,11 +78,15 @@ let find storage n key =
 
 let () = 
   Printf.printf "\n\n-- Test 01 -- \n\n";
-  let k = 1 and m = 3 in 
+  let m = 3 in 
   let n = 
-    let keys = S8BT.Keys.array [| "00000001" |] in
-    let vals = S8BT.Keys.array [| "0000000A" |] in 
-    S8BT.make_node ~keys ~vals ~offset:0 ~k ~m () 
+    let keys =  [| "00000001" |] in
+    let vals =  [| "0000000A" |] in 
+    S8BT.make_leaf_node ~keys ~vals ~offset:0 ~nb_of_vals:1  ~m () 
+  in 
+  let n = match n with
+    | S8BT.Make_result_node n -> n 
+    | _ -> assert(false) 
   in 
   Printf.printf "Node created, length on disk: %i\n"
     (S8BT.node_length n);
@@ -93,7 +97,11 @@ let () =
 
   Printf.printf "storage:%s\n" (string_of_bytes storage);
 
-  let n' = S8BT.make_node ~offset:0 ~k ~m () in 
+  let n' = 
+    match S8BT.make_leaf_node ~offset:0 ~nb_of_vals:1 ~m () with
+    | S8BT.Make_result_node n -> n 
+    | _ -> assert(false) 
+  in 
   let v  = find storage n' "00000001" in 
   match v with
   | None -> Printf.printf "Value not found"
@@ -106,7 +114,7 @@ let () =
     *              |18-33|
     *  +--------------+------------+
     *  |              |            |
-    * |12|           |23|         |48|
+    * |12|         |23-30|        |48|
     *)
   let m = 3 in  (* 2-3 Btree *)
   let node_length = S8BT.node_length_of_m m in
@@ -116,32 +124,42 @@ let () =
     (Printf.sprintf "000000%s" s, Printf.sprintf "%s000000" s) 
   in
 
-  let make_leaf_node offset s = 
-    let k = 1 in 
-    let key, val_ = make_test_key_val s in
-    let keys = S8BT.Keys.array [|key|] in 
-    let vals = S8BT.Vals.array [|val_|] in 
-    S8BT.make_node ~keys ~vals ~k ~m ~offset ()  
+  let make_leaf_node offset key_strings  = 
+    let nb_of_vals = List.length key_strings in 
+    let keys, vals = List.fold_left (fun (keys, vals) s -> 
+      let key, val_ = make_test_key_val s in
+      (key::keys, val_::vals)
+    ) ([], []) key_strings in 
+
+    let keys = Array.of_list @@ List.rev keys in 
+    let vals = Array.of_list @@ List.rev vals in 
+    match S8BT.make_leaf_node ~keys ~vals ~nb_of_vals ~m ~offset () with
+    | S8BT.Make_result_node n -> n 
+    | _ -> assert(false) 
   in
 
   let n48_offset = 3 * node_length in 
-  let n48 = make_leaf_node n48_offset "48" in 
+  let n48 = make_leaf_node n48_offset ["48"] in 
 
   let n23_offset = 2 * node_length in 
-  let n23 = make_leaf_node n23_offset "23" in 
+  let n23 = make_leaf_node n23_offset ["23";"30"] in 
 
   let n12_offset = node_length in
-  let n12 = make_leaf_node n12_offset "12" in 
+  let n12 = make_leaf_node n12_offset ["12"] in 
   
   let nroot = 
-    let k = 3 in 
     let offset = 0 in 
     let key1, val1 = make_test_key_val "18" in 
     let key2, val2 = make_test_key_val "33" in 
-    let keys = S8BT.Keys.array [| key1; key2 |] in 
-    let vals = S8BT.Vals.array [| val1; val2 |] in 
-    let subtrees = S8BT.Ints.array [|n12_offset; n23_offset; n48_offset|] in 
-    S8BT.make_node ~keys ~vals ~subtrees ~offset ~k ~m () 
+    let keys = [| key1; key2 |] in 
+    let vals = [| val1; val2 |] in 
+    let subtrees = [|n12_offset; n23_offset; n48_offset|] in 
+    let res = 
+      S8BT.make_intermediate_node ~keys ~vals ~subtrees ~offset ~nb_of_vals:2 ~m () 
+    in 
+    match res with
+    | S8BT.Make_result_node n -> n
+    | _ -> assert(false) 
   in 
   
   let all_nodes = [nroot; n12; n23; n48] in
@@ -156,9 +174,10 @@ let () =
   Printf.printf "storage:%s\n" (string_of_bytes storage); 
 
   let nroot = 
-    let k = 3 in 
     let offset = 0 in 
-    S8BT.make_node ~k ~m ~offset () 
+    match S8BT.make_intermediate_node ~nb_of_vals:2 ~m ~offset () with
+    | S8BT.Make_result_node n -> n
+    | _ -> assert(false)
   in 
 
   let find s expected = 
@@ -168,6 +187,7 @@ let () =
   find "00000012" (Some "12000000"); 
   find "00000018" (Some "18000000"); 
   find "00000023" (Some "23000000"); 
+  find "00000030" (Some "30000000"); 
   find "00000033" (Some "33000000"); 
   find "00000048" (Some "48000000"); 
   find "00000052" None;
