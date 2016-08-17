@@ -3,6 +3,15 @@ OCB_FLAGS = -use-ocamlfind
 OCB       = ocamlbuild $(OCB_FLAGS) $(OCB_INC)
 
 
-all:
-	$(OCB) btree_test.native
+.PHONY: all build 
+
+all: build
 	export OCAMLRUNPARAM="b" && ./btree_test.native
+
+build:
+	$(OCB) btree_test.native
+
+clean:
+	$(OCB) -clean
+
+
