@@ -41,11 +41,6 @@ let cons_option o l =
   | None -> l 
   | Some x -> x::l 
 
-let array_split_at a pos = 
-  let left = Array.sub a 0 pos in
-  let right = Array.sub a pos (Array.length a - pos) in 
-  (left , right) 
-
 let array_insert a pos v = 
   let a_len = Array.length a in 
   let new_a_len = a_len + 1 in 
@@ -54,35 +49,14 @@ let array_insert a pos v =
   Array.blit a pos new_a (pos + 1) (a_len - pos); 
   new_a  
 
-let array_insert_pop_left a pos v = 
-  assert(pos > 0); 
-  assert(pos <= Array.length a);
-  let poped = a.(0) in 
-  Array.blit a 1 a 0 (pos - 1);
-  Array.set a (pos-1) v; 
-  poped 
-
-(** [array_insert_split a pos v] return the array 
- *  [ [| [v; a.(pos); a.(pos + 1) ...  * a.(n) |] ] ] *)
-let array_insert_split a pos v = 
+let array_median_split a = 
   let a_len = Array.length a in 
-  assert(pos <= a_len); (* we allow append *)
-  let reminder_len = a_len - pos in 
-  let new_len = reminder_len + 1 in 
-  let new_a = Array.make new_len v in 
-  Array.blit a pos new_a 1 reminder_len; 
-  new_a 
-  
-(** [array_update_split a pos v] return the array 
- *  [ [| [v; a.(pos + 1); a.(pos + 2) ...  * a.(n) |] ] ] *)
-let array_update_split a pos v = 
-  let a_len = Array.length a in 
-  assert(pos < a_len); 
-  let reminder_len = a_len - pos in 
-  let new_a = Array.make reminder_len v in 
-  Array.blit a (pos + 1) new_a 1 (reminder_len - 1); 
-  new_a 
-
+  assert(a_len mod 2 = 1); 
+  let median = a_len / 2 in 
+  let median_val = Array.get a median in 
+  let left = Array.sub a 0 median in 
+  let right = Array.sub a (median + 1) median in 
+  (median_val, left, right)  
 
 (** Module signature for types which can be encoded in a fixed size array
     of bytes. 
@@ -268,28 +242,16 @@ module Typed_block(FS:Fixed_size_sig) = struct
     in 
     aux 0 0
 
+  let write_from_values offset a = 
+    let bytes = to_bytes_from_values a in 
+    write_op ~offset ~bytes ()
+
   let write {offset; data} =  
     match data with
     | Data_values a -> 
-      let bytes = to_bytes_from_values a in 
-      Some (write_op ~offset ~bytes ()) 
+      Some (write_from_values offset a ) 
     | Data_bytes (_, bytes) -> Some (write_op ~offset ~bytes ())
     | Data_on_disk _ -> None 
-
-  (* TODO this simply return the write op, it would be worth
-   * to also return the new [t] value with the inserted value
-   *)
-  let insert_write_op offset values pos v =  
-    let values' = array_insert_split values pos v in 
-    let offset = offset + (pos * FS.length) in 
-    let bytes = to_bytes_from_values values' in 
-    write_op ~offset ~bytes () 
-  
-  let update_write_op offset values pos v =  
-    let values' = array_update_split values pos v in 
-    let offset = offset + (pos * FS.length) in 
-    let bytes = to_bytes_from_values values' in 
-    write_op ~offset ~bytes () 
 
 end
 
@@ -367,6 +329,9 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     if k < 0 then k - 1 else k + 1 
 
   let nb_of_vals = Pervasives.abs  
+
+  let is_node_full ~k ~m () = 
+    nb_of_vals k = m 
 
   let nb_of_subtrees k = 
     if k < 0 
@@ -587,8 +552,6 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
       | i -> 
         let key' = Array.get keys_array i in 
-        Printf.printf "In leaf node, key: %s, key': %s\n" 
-          (Key.to_string key) (Key.to_string key');
         if key = key' 
         then return_val_at node i 
         else aux (i + 1) 
@@ -639,123 +602,102 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     in 
     aux 0 
 
+  let insert_split_node {m; keys; vals; offset; _ } keys_values vals_values = 
+
+    assert(Array.length keys_values = Array.length vals_values);
+    
+    let nb_of_vals = Array.length keys_values in 
+
+    let (
+      median_key, 
+      left_keys_values, 
+      right_keys_values 
+    ) = array_median_split keys_values in 
+
+    let (
+      median_value, 
+      left_vals_values, 
+      right_vals_values 
+    ) = array_median_split vals_values in 
+
+    let k = - (nb_of_vals / 2) in  
+
+    let k_write_op = k_write_op ~offset ~k () in 
+
+    let n_keys_write_op = 
+      Keys.write_from_values (Keys.offset keys) left_keys_values 
+    in 
+    let n_vals_write_op = 
+      Vals.write_from_values (Vals.offset vals) left_vals_values; 
+    in 
+
+    let continuation = (fun new_node_offset -> 
+      let new_node = make_leaf_node 
+        ~keys:right_keys_values 
+        ~vals:right_vals_values
+        ~offset:new_node_offset 
+        ~m 
+        ~nb_of_vals:(nb_of_vals / 2)  
+        () in  
+
+      let new_node = match new_node with
+        | Make_result_node n -> n
+        | _ -> failwith "Programmatic error"
+      in  
+
+      let write_ops = 
+        k_write_op      ::  
+        n_keys_write_op :: 
+        n_vals_write_op :: 
+        (full_write new_node) 
+      in 
+      Insert_res_node_split (median_key, median_value, new_node, write_ops) 
+    ) in
+
+    Insert_res_allocate (node_length_of_m m, continuation) 
+
   let rec insert ({k; keys; vals; m; offset; _} as node) key value = 
     if is_leaf k 
     then
-      let nb_of_vals = nb_of_vals k in 
-      (* The key/val can be inserted in this node *)
       match Keys.to_values keys , Vals.to_values vals with
       | Keys.To_values_values keys_values , Vals.To_values_values vals_values -> 
         (* find the place to insert the new values and shift
          * all the ones after it by the size of the inserted 
          * key. *)
-        assert(nb_of_vals = Array.length keys_values);
+        assert(nb_of_vals k = Array.length keys_values);
+        assert(nb_of_vals k = Array.length vals_values);
 
         begin match find_key_insert_position keys_values key with
         | `Update pos ->
-          let keys_write_op = 
-            Keys.update_write_op (Keys.offset keys) keys_values pos key 
-          in  
-          let vals_write_op = 
-            Vals.update_write_op (Vals.offset vals) vals_values pos value
-          in  
-          Insert_res_done [ keys_write_op; vals_write_op;]
+          Array.set keys_values pos key; 
+          Array.set vals_values pos value;
+          Insert_res_done [
+            Keys.write_from_values (Keys.offset keys) keys_values; 
+            Vals.write_from_values (Vals.offset vals) vals_values; 
+          ]
 
         | `Insert pos -> 
-          let nb_of_vals = nb_of_vals + 1 in 
-          if nb_of_vals = m 
-          then begin  
-            let median = nb_of_vals / 2 in 
-            Printf.printf "pos: %i, median: %i\n" pos median;
-            begin match Pervasives.compare pos median with
-            | 0 -> 
-              (* The new value is the median *)
+          let keys_values = array_insert keys_values pos key in  
+          let vals_values = array_insert vals_values pos value in 
 
-              (* split the keys/values in half *)
-              let (_, right_keys_values) = array_split_at keys_values median in 
-              let (_, right_vals_values) = array_split_at vals_values median in 
-              (* update k to be half *)
+          let k = incr_k k in  
 
-              let k = - median in  
-              let k_write_op = k_write_op ~offset ~k () in  
-
-              (* allocate a new node and initialize the new node with the
-               * other half of the keys/values *)
-              let continuation = (fun new_node_offset -> 
-                let new_node = make_leaf_node 
-                  ~keys:right_keys_values 
-                  ~vals:right_vals_values
-                  ~offset:new_node_offset 
-                  ~m 
-                  ~nb_of_vals:median
-                  () in  
-
-                let new_node = match new_node with
-                  | Make_result_node n -> n
-                  | _ -> failwith "Programmatic error"
-                in  
-                let write_ops = k_write_op :: (full_write new_node) in 
-                Insert_res_node_split (key, value, new_node, write_ops) 
-              ) in 
-              Insert_res_allocate (node_length_of_m m, continuation) 
-
-            | c when c > 0 ->
-              (* the new value is in the right node which will be newly
-               * created *)
-
-              (* split the keys/values in half *)
-              let (_, right_keys_values) = array_split_at keys_values median in 
-              let (_, right_vals_values) = array_split_at vals_values median in 
-
-              (* update k to be half
-               * note that since we are only truncating the current node, 
-               * only the new k value needs to be written to disk. *)
-              let k = - median in  
-              let k_write_op = k_write_op ~offset ~k () in  
-
-              let pos = pos - median in 
-                (* the position in the new leaf node array *)
-              let median_key = array_insert_pop_left right_keys_values pos key in 
-              let median_val = array_insert_pop_left right_vals_values pos value in 
-
-              (* allocate a new node and initialize the new node with the
-               * other half of the keys/values *)
-              let continuation = (fun new_node_offset -> 
-                let new_node = make_leaf_node 
-                  ~keys:right_keys_values 
-                  ~vals:right_vals_values
-                  ~offset:new_node_offset 
-                  ~m 
-                  ~nb_of_vals:median
-                  () in  
-
-                let new_node = match new_node with
-                  | Make_result_node n -> n
-                  | _ -> failwith "Programmatic error"
-                in  
-                let write_ops = k_write_op :: (full_write new_node) in 
-                Insert_res_node_split (median_key, median_val, new_node, write_ops) 
-              ) in
-              Insert_res_allocate (node_length_of_m m, continuation)
-               
-
-            | _ -> failwith "Not implemented"
-            end
-          
-          end
+          if is_node_full ~k ~m ()  
+          then
+            (* Node is full after the insertion. 
+             *
+             * - The median key/value should be extracted and returned 
+             *   to caller
+             * - The current node should be truncated in half
+             * - A new node should be created with the remaining key/values.
+             *)
+            insert_split_node node keys_values vals_values 
           else 
-
-            let keys_write_op = 
-              Keys.insert_write_op (Keys.offset keys) keys_values pos key 
-            in  
-            let vals_write_op = 
-              Vals.insert_write_op (Vals.offset vals) vals_values pos value
-            in  
-            let k = incr_k k in 
             Insert_res_done [
-              keys_write_op;
-              vals_write_op; 
-              k_write_op ~offset ~k ()]
+              Keys.write_from_values (Keys.offset keys) keys_values;
+              Vals.write_from_values (Vals.offset vals) vals_values;
+              k_write_op ~offset ~k ()
+            ]
         end
         
       | Keys.To_values_read_data block, _ -> 
@@ -764,6 +706,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
           insert node key value 
         in 
         Insert_res_read_data (block, continuation) 
+
       | Keys.To_values_values _, Vals.To_values_read_data block -> 
         let continuation = fun bytes -> 
           let node = {node with vals = Vals.update_to_bytes vals bytes} in 
@@ -773,7 +716,6 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
     else 
       failwith "Not handled yet"
-
 
   type make_from_disk_result = 
     | Make_from_disk_node of node 

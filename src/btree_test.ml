@@ -17,6 +17,17 @@ let hex = function
   | 15 -> 'F'
   | _ -> assert(false)
 
+let is_debug = false 
+
+let printf = 
+  if is_debug 
+  then Printf.printf 
+  else (fun fmt -> Printf.ifprintf stdout fmt)  
+
+
+let print_test_banner i = 
+  Printf.printf "\n-- Test [%03i] -- \n" i 
+
 let string_of_bytes bytes : string = 
   let len = Bytes.length bytes in 
   let rec aux = function
@@ -52,7 +63,7 @@ end
 module S8BT = Btree.Make(String8)(String8) 
 
 let do_write_op storage ({Btree.offset; bytes; } : Btree.write_op) = 
-  Printf.printf "- writing to offset %i%s\n" 
+  printf "- writing to offset %i%s\n" 
     offset 
     (string_of_bytes bytes); 
   let length_to_write = Bytes.length bytes in 
@@ -67,13 +78,13 @@ let do_write_ops storage write_ops =
   ) write_ops
 
 let do_read_op storage ({Btree.offset;length} as block) = 
-  Printf.printf "- reading block: %s" (Btree.string_of_block block);
+  printf "- reading block: %s" (Btree.string_of_block block);
   let sub = Bytes.sub storage offset length in
-  Printf.printf "%s\n" (string_of_bytes sub); 
+  printf "%s\n" (string_of_bytes sub); 
   sub 
 
 let do_allocate storage length = 
-  Printf.printf "- allocating block of length: %i\n" length;
+  printf "- allocating block of length: %i\n" length;
   let offset = Bytes.length storage in 
   let storage = Bytes.extend storage 0 length in 
   (storage, offset) 
@@ -119,7 +130,7 @@ let insert ~storage ~offset ~m ~key ~value () =
   aux storage (S8BT.insert n key value)
 
 let () = 
-  Printf.printf "\n\n-- Test 01 -- \n\n";
+  print_test_banner 1; 
   let m = 3 in 
   let n = 
     let keys =  [| "00000001" |] in
@@ -130,26 +141,26 @@ let () =
     | S8BT.Make_result_node n -> n 
     | _ -> assert(false) 
   in 
-  Printf.printf "Node created, length on disk: %i\n"
+  printf "Node created, length on disk: %i\n"
     (S8BT.node_length n);
   let writes = S8BT.full_write n in 
   
   let storage = Bytes.create (S8BT.node_length n) in 
   List.iter (fun write -> do_write_op storage write) writes; 
 
-  Printf.printf "storage:%s\n" (string_of_bytes storage);
+  printf "storage:%s\n" (string_of_bytes storage);
 
   let v  = find ~storage ~offset:0 ~m:3 ~key:"00000001" () in 
   match v with
-  | None -> Printf.printf "Value not found"
-  | Some x -> Printf.printf "Value found: %s\n" x
+  | None -> printf "Value not found"
+  | Some x -> printf "Value found: %s\n" x
 
 let make_test_key_val s = 
   assert(String.length s = 2);
   (Printf.sprintf "000000%s" s, Printf.sprintf "%s000000" s) 
 
 let () = 
-  Printf.printf "\n\n-- Test 02 -- \n\n";
+  print_test_banner 2; 
    (* 
     *              |18-33|
     *  +--------------+------------+
@@ -211,7 +222,7 @@ let () =
     ) (S8BT.full_write n)
   ) all_nodes;
 
-  Printf.printf "storage:%s\n" (string_of_bytes storage); 
+  printf "storage:%s\n" (string_of_bytes storage); 
 
   let find s expected = 
     assert(expected = find ~storage ~offset:0 ~m ~key:s ())
@@ -246,7 +257,7 @@ let make_leaf_node_storage keys vals m =
 
 
 let () = 
-  Printf.printf "\n\n-- Test 03 -- \n\n";
+  print_test_banner 3;
 
   let m = 7 in 
   let key1, val1 = make_test_key_val "BB" in 
@@ -260,7 +271,7 @@ let () =
 
   let offset = 0 in 
   
-  Printf.printf "Leaf node created ... \n";
+  printf "Leaf node created ... \n";
 
   let insert key value = 
     match insert ~storage:!storage ~offset ~m ~key ~value () with
@@ -272,20 +283,20 @@ let () =
     assert(expected = find ~storage:!storage ~offset ~m ~key:s ())
   in
 
-  Printf.printf "Inserting EE\n";
+  printf "Inserting EE\n";
   let key3, val3 = make_test_key_val "EE" in 
   insert key3 val3;  
   find key1 (Some val1); 
   find key2 (Some val2); 
   find key3 (Some val3); 
-  Printf.printf "Inserting AA\n";
+  printf "Inserting AA\n";
   let key4, val4 = make_test_key_val "AA" in 
   insert key4 val4;  
   find key1 (Some val1); 
   find key2 (Some val2); 
   find key3 (Some val3); 
   find key4 (Some val4); 
-  Printf.printf "Inserting CC\n";
+  printf "Inserting CC\n";
   let key5, val5 = make_test_key_val "CC" in 
   insert key5 val5;  
   find key1 (Some val1); 
@@ -302,7 +313,7 @@ let () =
   () 
 
 let () = 
-  Printf.printf "\n\n-- Test 04 -- \n\n";
+  print_test_banner 4;
   (*
    * In this test we make sure the insertion of a new key/value on 
    * a full node with the new key being the median of all the values in 
@@ -325,8 +336,6 @@ let () =
   let node_length = S8BT.node_length_of_m m in 
   let offset = 0 in 
   
-  Printf.printf "Leaf node created ... \n";
-
   let key3, val3 = make_test_key_val "BB" in 
   begin match insert ~storage ~offset ~m ~key:key3 ~value:val3 () with
   | Insert_res_done _ -> assert(false)
@@ -356,43 +365,6 @@ let () =
   end;
   ()
 
-let () = 
-  let a = [|1;2;3;4|] in 
-  let (s1, s2) = Btree.array_split_at a 2 in
-  assert(s1 = [|1;2|]); 
-  assert(s2 = [|3;4|]);
-  let (s1, s2) = Btree.array_split_at a 1 in
-  assert(s1 = [|1|]); 
-  assert(s2 = [|2;3;4|]);
-  let (s1, s2) = Btree.array_split_at a 0 in
-  assert(s1 = [||]); 
-  assert(s2 = [|1;2;3;4|]);
-  let (s1, s2) = Btree.array_split_at a 3 in
-  assert(s1 = [|1;2;3;|]); 
-  assert(s2 = [|4|]);
-  let (s1, s2) = Btree.array_split_at a 4 in
-  assert(s1 = [|1;2;3;4|]); 
-  assert(s2 = [||]);
-  ()
-
-let () =
-  let a = [|1;2;3;4|] in 
-  let p = Btree.array_insert_pop_left a 2 0 in 
-  assert(p = 1); 
-  assert(a = [|2;0;3;4|])
-
-let () =
-  let a = [|1;2;3;4|] in 
-  let p = Btree.array_insert_pop_left a 1 0 in 
-  assert(p = 1); 
-  assert(a = [|0;2;3;4|])
-
-let () =
-  let a = [|1;2;3;4|] in 
-  let p = Btree.array_insert_pop_left a 4 0 in 
-  assert(p = 1); 
-  assert(a = [|2;3;4;0|])
-
 let () =
   let a = [|1;2;3;4|] in 
   let a'= Btree.array_insert a 0 0 in 
@@ -404,19 +376,16 @@ let () =
   ()
 
 let () = 
-  Printf.printf "\n\n-- Test 05 -- \n\n";
+  print_test_banner 5; 
   (*
    * In this test we make sure the insertion of a new key/value on 
    * a full node with the key greater than the the median 
    * of all the keys of the full node. 
-   *
-   * The expectation is that the median value should be the node is split
-   * and the key/value inserted in the newly created node
    *)
 
   let m = 3 in 
   let key1, val1 = make_test_key_val "AA" in 
-  let key2, val2 = make_test_key_val "CC" in 
+  let key2, val2 = make_test_key_val "BB" in 
   let storage = 
     let keys = [| key1; key2 |] in 
     let vals = [| val1; val2 |] in 
@@ -426,9 +395,7 @@ let () =
   let node_length = S8BT.node_length_of_m m in 
   let offset = 0 in 
   
-  Printf.printf "Leaf node created ... \n";
-
-  let key3, val3 = make_test_key_val "DD" in 
+  let key3, val3 = make_test_key_val "CC" in 
   begin match insert ~storage ~offset ~m ~key:key3 ~value:val3 () with
   | Insert_res_done _ -> assert(false)
   | Insert_res_node_split (storage, k, v, n, write_ops) -> 
@@ -453,6 +420,58 @@ let () =
       assert(expected = find ~storage ~offset:node_length ~m ~key:s ())
     in
     find_second_node key3 (Some val3); 
+
+  end;
+  ()
+
+let () = 
+  print_test_banner 6;
+  (*
+   * In this test we make sure the insertion of a new key/value on 
+   * a full node with the key lesser than the the median 
+   * of all the keys of the full node. 
+   *)
+
+  let m = 3 in 
+  let key1, val1 = make_test_key_val "BB" in 
+  let key2, val2 = make_test_key_val "CC" in 
+  let storage = 
+    let keys = [| key1; key2 |] in 
+    let vals = [| val1; val2 |] in 
+    make_leaf_node_storage keys vals m 
+  in
+
+  let node_length = S8BT.node_length_of_m m in 
+  let offset = 0 in 
+  
+  printf "Leaf node created ... \n";
+
+  let key3, val3 = make_test_key_val "AA" in 
+  begin match insert ~storage ~offset ~m ~key:key3 ~value:val3 () with
+  | Insert_res_done _ -> assert(false)
+  | Insert_res_node_split (storage, k, v, n, write_ops) -> 
+    let _ = write_ops in
+    assert(Bytes.length storage = 2 * node_length);
+      (* verify the allocation happened and storage resized *)
+
+    assert(node_length = S8BT.node_offset n);
+      (* verify that the offset was at the end of the initial storage size *)
+
+    printf "median key: %s\n" k;
+    assert(k = key1); 
+    assert(v = val1); 
+
+    do_write_ops storage write_ops; 
+
+    let find_first_node s expected = 
+      assert(expected = find ~storage ~offset:0 ~m ~key:s ())
+    in
+    find_first_node key3 (Some val3);
+
+    let find_second_node s expected = 
+      assert(expected = find ~storage ~offset:node_length ~m ~key:s ())
+    in
+    find_second_node key2 (Some val2); 
 
   end;
   ()
