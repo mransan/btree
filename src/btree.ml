@@ -58,6 +58,17 @@ let array_median_split a =
   let right = Array.sub a (median + 1) median in 
   (median_val, left, right)  
 
+let array_half_split a = 
+  let a_len = Array.length a in 
+  assert(a_len mod 2 = 0); 
+  let half = a_len / 2 in 
+  let left = Array.sub a 0 half in 
+  let right = Array.sub a half half in 
+  (left, right)  
+
+
+  
+
 (** Module signature for types which can be encoded in a fixed size array
     of bytes. 
 
@@ -135,6 +146,8 @@ type block = {
   offset: int; 
   length: int;
 }
+
+let make_block ~offset ~length () = {offset; length; } 
 
 let string_of_block {offset; length} = 
   Printf.sprintf "{offset: %i, length: %i}" offset length
@@ -577,7 +590,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       Find_res_val (Array.get a i)
 
   type insert_res = 
-    | Insert_res_done of write_op list  
+    | Insert_res_done of (int option * write_op list)  
     | Insert_res_read_data of block * insert_res_read_data_continuation  
     | Insert_res_allocate of int * insert_res_allocate_continuation 
     | Insert_res_node_split of (Key.t * Val.t * node * write_op list) 
@@ -602,7 +615,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     in 
     aux 0 
 
-  let insert_split_node {m; keys; vals; offset; _ } keys_values vals_values = 
+  let insert_split_leaf_node {m; keys; vals; offset; _ } keys_values vals_values = 
 
     assert(Array.length keys_values = Array.length vals_values);
     
@@ -619,6 +632,11 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       left_vals_values, 
       right_vals_values 
     ) = array_median_split vals_values in 
+
+    assert(Array.length left_vals_values = nb_of_vals / 2);
+    assert(Array.length right_vals_values = nb_of_vals / 2);
+    assert(Array.length left_keys_values = nb_of_vals / 2);
+    assert(Array.length right_keys_values = nb_of_vals / 2);
 
     let k = - (nb_of_vals / 2) in  
 
@@ -655,8 +673,192 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     ) in
 
     Insert_res_allocate (node_length_of_m m, continuation) 
+  
+  let insert_split_intermediate_node node keys_values vals_values subtrees_values write_ops = 
 
-  let rec insert ({k; keys; vals; m; offset; _} as node) key value = 
+    let {m; keys; vals; subtrees; offset; _ }  = node in 
+
+    assert(Array.length keys_values = Array.length vals_values);
+    
+    let nb_of_vals = Array.length keys_values in 
+
+    let (
+      median_key, 
+      left_keys_values, 
+      right_keys_values 
+    ) = array_median_split keys_values in 
+
+    (*
+    Printf.printf  "insert_split_intermediate_node, median: %s\n" (Key.to_string median_key);
+    *)
+
+    let (
+      median_value, 
+      left_vals_values, 
+      right_vals_values 
+    ) = array_median_split vals_values in 
+
+    let (
+      left_subtrees_values, 
+      right_subtrees_values
+    ) = array_half_split subtrees_values in
+
+    assert(Array.length left_vals_values = nb_of_vals / 2);
+    assert(Array.length right_vals_values = nb_of_vals / 2);
+    assert(Array.length left_keys_values = nb_of_vals / 2);
+    assert(Array.length right_keys_values = nb_of_vals / 2);
+    assert(Array.length left_subtrees_values = (nb_of_vals / 2) + 1);
+    assert(Array.length right_subtrees_values = (nb_of_vals / 2) + 1);
+
+    let k = (nb_of_vals / 2) in  
+      (* the new node is not a leaf! *)
+
+    let k_write_op = k_write_op ~offset ~k () in 
+
+    (*
+    Printf.printf "k write op: k: %i, offset: %06i\n" k offset;
+    *)
+
+    let n_keys_write_op = 
+      Keys.write_from_values (Keys.offset keys) left_keys_values 
+    in 
+
+    let n_vals_write_op = 
+      Vals.write_from_values (Vals.offset vals) left_vals_values; 
+    in 
+
+    let n_subtrees_write_op = 
+      Ints.write_from_values (Ints.offset subtrees) left_subtrees_values; 
+    in 
+
+    let continuation = (fun new_node_offset -> 
+      let new_node = make_intermediate_node 
+        ~keys:right_keys_values 
+        ~vals:right_vals_values
+        ~subtrees:right_subtrees_values 
+        ~offset:new_node_offset 
+        ~m 
+        ~nb_of_vals:(nb_of_vals / 2)  
+        () in  
+
+      let new_node = match new_node with
+        | Make_result_node n -> n
+        | _ -> failwith "Programmatic error"
+      in  
+
+      let write_ops = 
+        k_write_op      ::  
+        n_keys_write_op :: 
+        n_vals_write_op :: 
+        n_subtrees_write_op ::
+        (full_write new_node @ write_ops) 
+      in 
+      Insert_res_node_split (median_key, median_value, new_node, write_ops) 
+    ) in
+
+    Insert_res_allocate (node_length_of_m m, continuation) 
+
+  let insert_make_root left_node right_node key value write_ops = 
+    let continuation = fun new_root_offset -> 
+      let new_root = make_intermediate_node 
+        ~keys:[| key |] 
+        ~vals:[| value |] 
+        ~subtrees:[| node_offset left_node; node_offset right_node |] 
+        ~offset:new_root_offset 
+        ~nb_of_vals:1 
+        ~m:left_node.m 
+        ()  
+      in
+      let new_root = match new_root with 
+        | Make_result_node n -> n 
+        | _ -> assert(false) 
+      in 
+
+      let write_ops = (full_write new_root) @ write_ops in 
+      Insert_res_done (Some new_root_offset, write_ops)
+    in
+    Insert_res_allocate (node_length_of_m left_node.m, continuation) 
+    
+  let insert_handle_subtree_split_node 
+            is_root
+            ({vals; keys; subtrees; k; m; offset; _ } as node)  
+            keys_values subtrees_values pos (key, value, n, write_ops) = 
+
+    (*
+    Printf.printf "insert_handle_subtree_split_node: offset: %i, k: %i\n"  
+      offset k; 
+    *)
+
+    let do_insert vals_values = 
+      (*
+      Printf.printf 
+        "insert_handle_subtree_split_node: key: %s\n" (Key.to_string key); 
+      Printf.printf 
+        "insert_handle_subtree_split_node: val: %s\n" (Val.to_string value); 
+      Printf.printf 
+        "insert_handle_subtree_split_node: subtree: %i\n" (node_offset n);
+       *)
+
+      let keys_values = array_insert keys_values pos key in  
+
+      (*
+      Array.iteri (fun i key -> 
+        Printf.printf "insert_handle_subtree_split_node: key[%02i] : %s\n" i
+        (Key.to_string key)
+      ) keys_values; 
+      *)
+
+      let vals_values = array_insert vals_values pos value in 
+      let subtrees_values = 
+        array_insert subtrees_values (pos + 1) (node_offset n) 
+      in 
+
+      let k = incr_k k in
+      (*
+      Printf.printf "insert_handle_subtree_split_node: k : %i, m: %i \n" k m;
+      *)
+      if is_node_full ~k ~m () 
+      then 
+
+        let rec aux ret = 
+          match ret with
+          | Insert_res_done _ -> ret 
+          | Insert_res_allocate (length, continuation) ->
+            let continuation' = fun offset ->  
+              continuation offset |> aux 
+            in 
+            Insert_res_allocate (length, continuation')
+          | Insert_res_read_data (block, continuation) -> 
+            let continuation' = fun bytes -> 
+              continuation bytes |>  aux 
+            in 
+            Insert_res_read_data (block, continuation') 
+
+          | Insert_res_node_split (key, value, right_node, write_ops) -> 
+            if is_root 
+            then insert_make_root node right_node key value write_ops 
+            else ret  
+        in
+        aux @@ insert_split_intermediate_node 
+          node keys_values vals_values subtrees_values write_ops  
+      else 
+        Insert_res_done (None, [
+          Keys.write_from_values (Keys.offset keys) keys_values;
+          Vals.write_from_values (Vals.offset vals) vals_values;
+          Ints.write_from_values (Ints.offset subtrees) subtrees_values;
+          k_write_op ~offset ~k ()
+        ] @ write_ops )
+    in 
+    match Vals.to_values vals with 
+    | Vals.To_values_values vals_values -> do_insert vals_values 
+    | Vals.To_values_read_data block -> 
+      let continuation = fun bytes -> 
+        let vals_values = Vals.to_values_from_bytes (nb_of_vals k) bytes in 
+        do_insert vals_values
+      in
+      Insert_res_read_data (block, continuation) 
+
+  let rec insert ?is_root:(is_root = true) ({k; keys; vals; subtrees; m; offset; _} as node) key value = 
     if is_leaf k 
     then
       match Keys.to_values keys , Vals.to_values vals with
@@ -671,10 +873,10 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
         | `Update pos ->
           Array.set keys_values pos key; 
           Array.set vals_values pos value;
-          Insert_res_done [
+          Insert_res_done (None, [
             Keys.write_from_values (Keys.offset keys) keys_values; 
             Vals.write_from_values (Vals.offset vals) vals_values; 
-          ]
+          ])
 
         | `Insert pos -> 
           let keys_values = array_insert keys_values pos key in  
@@ -691,31 +893,129 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
              * - The current node should be truncated in half
              * - A new node should be created with the remaining key/values.
              *)
-            insert_split_node node keys_values vals_values 
+            
+            let rec aux ret = 
+              match ret with
+              | Insert_res_done _ -> ret 
+              | Insert_res_allocate (length, continuation) ->
+                let continuation' = fun offset ->  
+                  continuation offset |> aux 
+                in 
+                Insert_res_allocate (length, continuation')
+              | Insert_res_read_data (block, continuation) -> 
+                let continuation' = fun bytes -> 
+                  continuation bytes |>  aux 
+                in 
+                Insert_res_read_data (block, continuation') 
+              | Insert_res_node_split (key, value, right_node, write_ops) -> 
+                if is_root 
+                then insert_make_root node right_node key value write_ops 
+                else ret  
+            in
+            aux @@ insert_split_leaf_node node keys_values vals_values 
           else 
-            Insert_res_done [
+            Insert_res_done (None, [
               Keys.write_from_values (Keys.offset keys) keys_values;
               Vals.write_from_values (Vals.offset vals) vals_values;
               k_write_op ~offset ~k ()
-            ]
+            ])
         end
         
       | Keys.To_values_read_data block, _ -> 
         let continuation = fun bytes -> 
           let node = {node with keys = Keys.update_to_bytes keys bytes} in 
-          insert node key value 
+          insert ~is_root node key value 
         in 
         Insert_res_read_data (block, continuation) 
 
       | Keys.To_values_values _, Vals.To_values_read_data block -> 
         let continuation = fun bytes -> 
           let node = {node with vals = Vals.update_to_bytes vals bytes} in 
-          insert node key value 
+          insert ~is_root node key value 
         in 
         Insert_res_read_data (block, continuation) 
 
-    else 
-      failwith "Not handled yet"
+    else (* not a leaf *)  
+      match Keys.to_values keys with
+      | Keys.To_values_read_data block -> 
+        let continuation = fun bytes -> 
+          let node = {node with
+            keys = Keys.update_to_values_from_bytes keys bytes; 
+          } in 
+          insert ~is_root node key value 
+        in 
+        Insert_res_read_data (block, continuation) 
+
+      | Keys.To_values_values keys_values -> 
+        begin match find_key_insert_position keys_values key with
+        | `Update pos -> 
+
+          let do_update vals_values = 
+            Array.set keys_values pos key; 
+            Array.set vals_values pos value; 
+            Insert_res_done (None, [
+              Keys.write_from_values (Keys.offset keys) keys_values;
+              Vals.write_from_values (Vals.offset vals) vals_values;
+            ])
+          in
+          begin match Vals.to_values vals with
+          | Vals.To_values_values vals_values -> do_update vals_values 
+          | Vals.To_values_read_data block -> 
+            let continuation = fun bytes -> 
+              let vals_values = Vals.to_values_from_bytes (nb_of_vals k) bytes in 
+              do_update vals_values
+            in
+            Insert_res_read_data (block, continuation) 
+          end
+
+        | `Insert pos -> 
+
+          let do_insert subtrees_values = 
+            let subtree_offset = Array.get subtrees_values pos in 
+            let continuation = fun bytes -> 
+              let k = Int.of_bytes bytes 0 in 
+              let child_node = make_disk_node ~k ~m ~offset:subtree_offset () in 
+              let rec aux res = 
+                match res with 
+                | Insert_res_done _ -> res 
+
+                | Insert_res_allocate (length, k) -> 
+                  let continuation = fun offset -> 
+                    k offset |>  aux 
+                  in 
+                  Insert_res_allocate (length, continuation) 
+
+                | Insert_res_read_data (block, k) -> 
+                  let continuation = fun bytes -> 
+                    k bytes |> aux 
+                  in 
+                  Insert_res_read_data (block, continuation) 
+
+                | Insert_res_node_split node_split -> 
+                  insert_handle_subtree_split_node 
+                    is_root node keys_values subtrees_values pos node_split
+              in
+              insert ~is_root:false child_node key value |> aux 
+                     
+            in 
+            Insert_res_read_data (
+              {offset = subtree_offset; length = Int.length}, 
+              continuation
+            ) 
+          in
+          begin match Ints.to_values subtrees with
+          | Ints.To_values_values subtrees_values -> do_insert subtrees_values 
+          | Ints.To_values_read_data block -> 
+            let continuation = fun bytes -> 
+              let subtrees_values = 
+                Ints.to_values_from_bytes (nb_of_subtrees k) bytes 
+              in  
+
+              do_insert subtrees_values 
+            in 
+            Insert_res_read_data (block, continuation)
+          end
+        end
 
   type make_from_disk_result = 
     | Make_from_disk_node of node 
@@ -731,5 +1031,68 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     in 
     let block : block = { offset ; length = Int.length; } in 
     Make_from_disk_read_data (block, continuation)  
+
+
+  type debug_res = 
+    | Debug_res_read_data of block * debug_res_continuation 
+    | Debug_res_done  
+
+  and debug_res_continuation = bytes -> debug_res  
+
+  let indent_string  n = String.make n ' ' 
+
+  let rec debug indent offset m = 
+
+    let continuation = fun bytes -> 
+      let k = Int.of_bytes bytes 0 in 
+      let keys_bytes = 
+        Bytes.sub bytes (keys_offset offset m - offset) (keys_length m) 
+      in 
+      let keys = Keys.to_values_from_bytes (nb_of_vals k) keys_bytes in 
+
+      if is_leaf k 
+      then begin  
+        let keys = String.concat ", " 
+          (keys |> Array.to_list |> List.map Key.to_string) 
+        in 
+        Printf.printf "%s+- Leaf [%06i] : [%s]\n" (indent_string indent) offset keys;
+        Debug_res_done
+      end
+      else begin 
+        Printf.printf "%s+- Node [%06i] \n" (indent_string indent) offset;
+        let subtrees_bytes = 
+          Bytes.sub bytes (subtrees_offset offset m - offset) (subtrees_length m) 
+        in 
+
+        let subtrees = 
+          Ints.to_values_from_bytes (nb_of_subtrees k) subtrees_bytes 
+        in 
+
+        let rec aux i = 
+          let do_next () = 
+            if i = (nb_of_vals k) 
+            then Debug_res_done 
+            else begin  
+              Printf.printf "%s|- Key [%02i] : %s\n" 
+                (indent_string (indent + 1)) i (Array.get keys i |> Key.to_string); 
+              aux (i + 1)
+            end 
+          in
+
+          let rec aux2 = function
+            | Debug_res_done -> do_next () 
+            | Debug_res_read_data (block, continuation) ->
+              let continuation' = fun bytes -> 
+                continuation bytes |> aux2 
+              in 
+              Debug_res_read_data (block, continuation') 
+          in
+          aux2 @@ debug (indent + 1) (Array.get subtrees i) m 
+        in
+        aux 0 
+      end
+    in 
+    Debug_res_read_data (make_block ~offset ~length:(node_length_of_m m) (),
+                         continuation) 
 
 end 
