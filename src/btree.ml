@@ -260,11 +260,6 @@ module Typed_block(FS:Fixed_size_sig) = struct
 
   (** {2 Constructors} *)
 
-  let values ~offset ~values () = {
-    offset; 
-    data = Data_values values;
-  }
-  
   let on_disk ~offset ~n () = {
     offset; 
     data = Data_on_disk n;
@@ -458,30 +453,10 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
   let subtrees_length m = 
     m * Int.length
 
-  let keys_block offset m = {
-    offset = keys_offset offset m;
-    length = keys_length m; 
-  }
-  
-  let vals_block offset m = {
-    offset = vals_offset offset m;
-    length = vals_length m; 
-  }
-  
-  let subtrees_block offset m = {
-    offset = subtrees_offset offset m;
-    length = subtrees_length m; 
-  }
-
   let node_length_of_m m = 
     Int.length + (keys_length m) + (vals_length m) + (subtrees_length m) 
 
   let node_offset ({offset; _ } : node)= offset 
-
-  type make_result = 
-    | Make_result_node of node 
-    | Make_result_invalid_number_of_values
-    | Make_result_inconsistent_vals_keys 
 
   let on_disk_blocks ~node_offset ~m ~nb_of_vals () = 
     let keys = 
@@ -550,107 +525,6 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     in 
 
     List.rev writes 
-
-  type find_res = 
-    | Find_res_not_found 
-    | Find_res_val of Val.t 
-    | Find_res_read_data of block * find_res_continuation  
-
-  and find_res_continuation = bytes -> find_res 
-
-  let rec find node key = 
-    let {k; keys; _} = node in 
-    
-    match Keys.to_values keys with
-    | Keys.To_values_read_data block -> 
-      let continutation = fun bytes -> 
-        let node = {node with 
-          keys = Keys.update_to_bytes keys bytes; 
-        } in 
-        find node key 
-      in 
-      Find_res_read_data (block, continutation) 
-
-    | Keys.To_values_values keys_array -> 
-      if is_leaf k
-      then (* this is a leaf node *)
-        find_leaf_node node key keys_array
-      else 
-        find_leaf_internal_node node key keys_array
-
-  and find_leaf_internal_node ({k; _ } as node) key keys_array = 
-    let nb_of_keys = nb_of_vals k in 
-    let rec aux = function
-      | i when i = nb_of_keys -> find_in_subtree node key i 
-      | i -> 
-        let key' = Array.get keys_array i in
-        match Key.compare key' key with
-        | 0 ->  return_val_at node i 
-        | c when c >  0 -> find_in_subtree node key i 
-        | _ -> aux (i + 1)
-    in  
-    aux 0
-
-  and find_in_subtree ({subtrees; m; _} as node) key subtree_i =  
-    match Ints.to_values subtrees with
-    | Ints.To_values_read_data block -> 
-      let continutation = fun bytes -> 
-        let node = {node with 
-          subtrees = Ints.update_to_values_from_bytes subtrees bytes
-        } in
-        find_in_subtree node key subtree_i
-      in 
-      Find_res_read_data (block, continutation)
-
-    | Ints.To_values_values (subtree_a :int array)-> 
-
-      let subtree_offset = Array.get subtree_a subtree_i in 
-      let continutation = fun bytes -> 
-        let k = Int.of_bytes bytes 0 in 
-        let node = make_disk_node ~k ~m ~offset:subtree_offset () in 
-        find node key 
-      in 
-
-      Find_res_read_data (
-        {offset  = subtree_offset; length = Int.length},
-        continutation
-      ) 
-  
-  and find_leaf_node node key keys_array =  
-    let nb_of_keys = Array.length keys_array in 
-      (* check invariant with [node.k] *)
-
-    let rec aux = function
-      | i when i = nb_of_keys -> 
-        Find_res_not_found
-        (* key of the leaf node is not matching, the key is 
-         * therefore not found. *)
-
-      | i -> 
-        let key' = Array.get keys_array i in 
-        if key = key' 
-        then return_val_at node i 
-        else aux (i + 1) 
-    in
-    aux 0
-  
-  and return_val_at {vals;k; _} i = 
-    match Vals.to_values vals with
-    | Vals.To_values_read_data block -> 
-      (* The values data was not read from disk, let's make sure
-       * this is done first *)
-      let continuation = fun bytes -> 
-        let vals_array = Vals.to_values_from_bytes (nb_of_vals k) bytes in 
-        Find_res_val (Array.get vals_array i) 
-        (* Note we could have recursively called this [find] function
-         * but it would have been ineficient and not that much more 
-         * elegant. *)
-      in 
-      Find_res_read_data (block, continuation) 
-
-    | Vals.To_values_values a -> 
-      (* Values are already read from disk, simply return it *)
-      Find_res_val (Array.get a i)
 
   type insert_res = 
     | Insert_res_done of (int option * write_op list)  
@@ -1084,7 +958,90 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     in 
     let block : block = { offset ; length = Int.length; } in 
     Make_from_disk_read_data (block, continuation)  
+  
+  type node_on_disk = {
+    offset: int; 
+    m : int; 
+  }
 
+  type node_as_byte = {
+    on_disk : node_on_disk;
+    k : int;
+    keys: Keys_bytes.t; 
+    vals: Vals_bytes.t;
+    subs: Ints_bytes.t;
+  }
+
+  let make_on_disk offset m = {offset; m}
+
+  let node_block {offset; m;} =
+    make_block ~offset ~length:(node_length_of_m m) 
+
+  let make_as_bytes ({m;_ } as on_disk) bytes = {
+    on_disk; 
+    k = Int.of_bytes bytes 0; 
+    keys = Keys_bytes.make (keys_offset_rel m) bytes; 
+    vals = Vals_bytes.make (vals_offset_rel m) bytes; 
+    subs = Ints_bytes.make (subtrees_offset_rel m) bytes;
+  }
+
+  type find_res = 
+    | Find_res_not_found 
+    | Find_res_val of Val.t 
+    | Find_res_read_data of block * find_res_continuation  
+
+  and find_res_continuation = bytes -> find_res 
+
+  let rec find (node:node_on_disk) key = 
+    let continuation = fun bytes -> 
+      find_as_bytes (make_as_bytes node bytes) key 
+    in 
+    Find_res_read_data (node_block node () ,continuation)
+    
+  and find_as_bytes (node:node_as_byte) key = 
+    let {k; _ } = node in 
+    if is_leaf k
+    then (* this is a leaf node *)
+      find_leaf_node node key
+    else 
+      find_leaf_internal_node node key 
+
+  and find_leaf_internal_node (node:node_as_byte) key = 
+    let { k; keys; _ } = node in 
+    let nb_of_keys = nb_of_vals k in 
+    let rec aux = function
+      | i when i = nb_of_keys -> find_in_subtree node key i 
+      | i -> 
+        let key' = Keys_bytes.get keys i in
+        match Key.compare key' key with
+        | 0 ->  return_val_at node i 
+        | c when c >  0 -> find_in_subtree node key i 
+        | _ -> aux (i + 1)
+    in  
+    aux 0
+
+  and find_in_subtree (node:node_as_byte) key subtree_i =  
+    let {subs;on_disk = {m;_}; _} = node in 
+    let sub = make_on_disk (Ints_bytes.get subs subtree_i) m in 
+    find sub key 
+  
+  and find_leaf_node (node:node_as_byte) key =  
+    let {k; keys; _ } = node in 
+    let nb_of_keys = nb_of_vals k in 
+
+    let rec aux = function
+      | i when i = nb_of_keys -> Find_res_not_found
+      | i -> 
+        let key' = Keys_bytes.get keys i in 
+        if key = key' 
+        then return_val_at node i 
+        else aux (i + 1) 
+    in
+    aux 0
+  
+  and return_val_at (node:node_as_byte) i = 
+    let {vals; _ } = node in 
+    Find_res_val (Vals_bytes.get vals i) 
 
   type debug_res = 
     | Debug_res_read_data of block * debug_res_continuation 
@@ -1094,58 +1051,59 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
   let indent_string  n = String.make n ' ' 
 
+
   let rec debug indent offset m = 
 
+    let on_disk = {offset; m} in 
+
     let continuation = fun bytes -> 
-      let k = Int.of_bytes bytes 0 in 
-      let keys_bytes = 
-        Bytes.sub bytes (keys_offset offset m - offset) (keys_length m) 
-      in 
-      let keys = Keys.to_values_from_bytes (nb_of_vals k) keys_bytes in 
+
+      let {
+        on_disk = {offset; m}; 
+        k; 
+        keys; 
+        subs; _ } = make_as_bytes on_disk bytes in 
+
+      let nb_of_vals  = nb_of_vals k in 
 
       if is_leaf k 
       then begin  
-        let keys = String.concat ", " 
-          (keys |> Array.to_list |> List.map Key.to_string) 
-        in 
+        let keys = String.concat ", " (
+          Keys_bytes.get_n keys nb_of_vals
+          |> Array.to_list 
+          |> List.map Key.to_string 
+        ) in 
         Printf.printf "%s+- Leaf [%06i] : [%s]\n" (indent_string indent) offset keys;
         Debug_res_done
       end
       else begin 
         Printf.printf "%s+- Node [%06i] \n" (indent_string indent) offset;
-        let subtrees_bytes = 
-          Bytes.sub bytes (subtrees_offset offset m - offset) (subtrees_length m) 
-        in 
-
-        let subtrees = 
-          Ints.to_values_from_bytes (nb_of_subtrees k) subtrees_bytes 
-        in 
 
         let rec aux i = 
-          let do_next () = 
-            if i = (nb_of_vals k) 
-            then Debug_res_done 
-            else begin  
-              Printf.printf "%s|- Key [%02i] : %s\n" 
-                (indent_string (indent + 1)) i (Array.get keys i |> Key.to_string); 
-              aux (i + 1)
-            end 
-          in
 
           let rec aux2 = function
-            | Debug_res_done -> do_next () 
+            | Debug_res_done -> 
+              if i = nb_of_vals 
+              then Debug_res_done 
+              else begin  
+                Printf.printf "%s|- Key [%02i] : %s\n" 
+                  (indent_string (indent + 1)) i (Keys_bytes.get keys i |> Key.to_string); 
+                aux (i + 1)
+              end 
+
             | Debug_res_read_data (block, continuation) ->
               let continuation' = fun bytes -> 
                 continuation bytes |> aux2 
               in 
               Debug_res_read_data (block, continuation') 
           in
-          aux2 @@ debug (indent + 1) (Array.get subtrees i) m 
+          aux2 @@ debug (indent + 1) (Ints_bytes.get subs i) m 
         in
         aux 0 
       end
     in 
-    Debug_res_read_data (make_block ~offset ~length:(node_length_of_m m) (),
-                         continuation) 
+
+    let node_block = node_block on_disk () in 
+    Debug_res_read_data (node_block, continuation) 
 
 end 

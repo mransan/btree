@@ -98,7 +98,8 @@ let make_node_from_offset ~storage ~offset ~m () =
   aux (S8BT.make_node_from_offset ~offset ~m ()) 
 
 let find ~storage ~offset ~m ~key () = 
-  let n = make_node_from_offset ~storage ~offset ~m () in 
+  
+  let n = S8BT.make_on_disk offset m in 
   let rec aux = function
     | S8BT.Find_res_val x -> Some x 
     | S8BT.Find_res_not_found -> None 
@@ -514,6 +515,8 @@ let () =
     Printf.printf "[%02i] root_offset: %06i, storage length: %06i\n" 
       i !root_offset (Bytes.length !storage); 
   done; 
+
+  debug !storage !root_offset m;  
 
   let find s expected = 
     match find ~storage:!storage ~offset:!root_offset ~m ~key:s () with
