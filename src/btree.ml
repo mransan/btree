@@ -161,6 +161,86 @@ let write_op ~offset ~bytes () = {offset; bytes}
 
 type read_op = block 
 
+module Typed_bytes(FS:Fixed_size_sig) =  struct 
+
+  type t = {
+    offset: int; 
+    bytes: bytes; 
+  } 
+
+  let make offset bytes = {offset; bytes}
+
+  let unsafe_get {offset; bytes} i = 
+    FS.of_bytes bytes (offset + i * FS.length)
+
+  let get ({offset; bytes} as t) i = 
+    if Bytes.length bytes < offset + (i + 1) * FS.length ||
+       i < 0 
+    then invalid_arg "Typed_bytes.get"
+    else unsafe_get t i  
+
+  let unsafe_set {offset; bytes} i v = 
+    FS.to_bytes v bytes (offset + i * FS.length) 
+
+  let set ({offset; bytes} as t) i v = 
+    if Bytes.length bytes < offset + (i + 1) * FS.length || 
+       i < 0 
+    then invalid_arg "Typed_bytes.set"
+    else unsafe_set t i v  
+ 
+  let unsafe_get_n ({offset; bytes} as t) n = 
+    if n = 0 
+    then [||]
+    else 
+      let e0 =  FS.of_bytes bytes offset in 
+      let a  = Array.make n e0 in 
+      let rec aux = function
+        | i when i = n -> a 
+        | i -> 
+          Array.set a i (unsafe_get t i) ; aux (i + 1) 
+      in 
+      aux 1  
+
+  let get_n ({offset; bytes} as t) n = 
+    if Bytes.length bytes < offset + (n) * FS.length ||
+       n < 0 
+    then invalid_arg "Typed_bytes.get_n"
+    else unsafe_get_n t n 
+
+  let unsafe_set_n t a = 
+    Array.iteri (fun i e -> unsafe_set t i e ) a  
+
+  let set_n ({offset; bytes} as t) a =  
+    (*
+    Printf.printf "bytes length: %i, offset: %i, array length: %i, FS length: %i\n"
+    (Bytes.length bytes) offset (Array.length a) FS.length; 
+    *)
+    if Bytes.length bytes < offset + (Array.length a) * FS.length 
+    then invalid_arg "Typed_bytes.set_n"
+    else unsafe_set_n t a 
+
+  let blit t1 o1 t2 o2 len = 
+    (* TODO add checks *)
+    let {offset = offset1; bytes = bytes1 } = t1 in 
+    let {offset = offset2; bytes = bytes2 } = t2 in 
+    let bo1 = offset1 + o1 * FS.length in 
+    let bo2 = offset2 + o2 * FS.length in 
+    Bytes.blit bytes1 bo1 bytes2 bo2 (len * FS.length)
+
+  (* n is the number of element prior to the insert *)
+  let unsafe_insert ({offset; bytes} as t) pos n v = 
+    blit t pos t (pos + 1) (n - pos); 
+    FS.to_bytes v bytes (offset + pos * FS.length)
+
+  let insert ({offset; bytes} as t) pos n v = 
+    if pos  < 0  ||
+       pos  > n  ||   (* we allow append at the end *)
+       (Bytes.length bytes < offset + (n + 1) * FS.length)
+    then invalid_arg "Typed_bytes.insert"
+    else unsafe_insert t pos n v 
+
+end 
+
 module Typed_block(FS:Fixed_size_sig) = struct 
 
   (** {2 Type} *)
@@ -179,11 +259,6 @@ module Typed_block(FS:Fixed_size_sig) = struct
   }
 
   (** {2 Constructors} *)
-
-  let bytes ~offset ~n ~bytes () = {
-    offset; 
-    data = Data_bytes (n, bytes);
-  } 
 
   let values ~offset ~values () = {
     offset; 
@@ -296,6 +371,11 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
   module Vals = Typed_block(Val)
   module Ints = Typed_block(Int)
 
+  module Keys_bytes = Typed_bytes(Key) 
+  module Vals_bytes = Typed_bytes(Val)
+  module Ints_bytes = Typed_bytes(Int)
+
+
   type node = {
 
     offset : int; 
@@ -350,6 +430,15 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     if k < 0 
     then subtrees_access_in_leaf_node ()
     else k + 1 
+  
+  let keys_offset_rel _ = 
+    Int.length
+
+  let vals_offset_rel m  =
+    keys_offset_rel m + ((m - 1) * Key.length)
+
+  let subtrees_offset_rel m = 
+    vals_offset_rel  m + ((m - 1) * Val.length)
 
   let keys_offset offset _ = 
     offset + Int.length
@@ -387,9 +476,6 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
   let node_length_of_m m = 
     Int.length + (keys_length m) + (vals_length m) + (subtrees_length m) 
 
-  let node_length {m; _} = 
-     node_length_of_m m  
-
   let node_offset ({offset; _ } : node)= offset 
 
   type make_result = 
@@ -410,60 +496,37 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     in 
     (keys, vals, subtrees) 
 
-  let make_leaf_node ?keys ?vals ~offset ~nb_of_vals ~m () = 
-    if nb_of_vals > m - 1 || nb_of_vals < 1  
-    then Make_result_invalid_number_of_values
-    else 
-      let k = - nb_of_vals in  
-      
-      let make keys vals subtrees = 
-        Make_result_node {m;offset;k;keys;vals;subtrees}
-      in
+  let write_leaf_node ~keys ~vals ~offset ~nb_of_vals ~m () = 
+    let bytes = Bytes.create (node_length_of_m m) in 
 
-      (* default ones are on disk *)
-      let on_disk_keys, on_disk_vals, on_disk_substrees = 
-        on_disk_blocks ~node_offset:offset ~m ~nb_of_vals () 
-      in  
+    let k = - nb_of_vals in 
 
-      match keys, vals with
-      | None, None -> 
-        make on_disk_keys on_disk_vals on_disk_substrees  
 
-      | Some keys, Some vals -> 
-        if Array.length keys <> Array.length vals 
-        then Make_result_inconsistent_vals_keys 
-        else 
-          let keys = Keys.values ~offset:(keys_offset offset m)  ~values:keys () in 
-          let vals = Vals.values ~offset:(vals_offset offset m)  ~values:vals () in 
-          make keys vals on_disk_substrees 
+    let keys_bytes = Keys_bytes.make (keys_offset_rel m) bytes in 
+    let vals_bytes = Vals_bytes.make (vals_offset_rel m) bytes in 
 
-      | _ -> Make_result_inconsistent_vals_keys
+    Int.to_bytes k bytes 0; 
+    Keys_bytes.set_n keys_bytes keys; 
+    Vals_bytes.set_n vals_bytes vals;
 
-  let make_intermediate_node ?keys ?vals ?subtrees ~offset ~nb_of_vals ~m () = 
-    if nb_of_vals > m - 1 || nb_of_vals < 1  
-    then Make_result_invalid_number_of_values
-    else 
-      let k = nb_of_vals in 
-      let make keys vals subtrees = 
-        Make_result_node {m;k;offset;keys;vals;subtrees}
-      in 
-      match keys, vals, subtrees with
-      | None, None, None -> 
-        let keys, vals, subtrees =
-          on_disk_blocks ~node_offset:offset ~m ~nb_of_vals () 
-        in  
-        make keys vals subtrees
-      | Some keys, Some vals, Some subtrees -> 
-        if Array.length keys <> Array.length vals || 
-           Array.length keys <> (Array.length subtrees - 1)
-        then 
-          Make_result_inconsistent_vals_keys
-        else 
-          let keys = Keys.values ~offset:(keys_offset offset m) ~values:keys () in 
-          let vals = Vals.values ~offset:(vals_offset offset m) ~values:vals () in 
-          let subtrees = Ints.values ~offset:(subtrees_offset offset m) ~values:subtrees () in 
-          make keys vals subtrees
-      | _ -> Make_result_inconsistent_vals_keys
+    write_op ~offset ~bytes ()  
+
+  let write_intermediate_node 
+          ~keys ~vals ~subtrees ~offset ~nb_of_vals ~m () = 
+
+    let bytes = Bytes.create (node_length_of_m m) in 
+    let k = nb_of_vals in 
+    
+    let keys_bytes = Keys_bytes.make (keys_offset_rel m) bytes in 
+    let vals_bytes = Vals_bytes.make (vals_offset_rel m) bytes in 
+    let subs_bytes = Ints_bytes.make (subtrees_offset_rel m) bytes in 
+    
+    Int.to_bytes k bytes 0; 
+    Keys_bytes.set_n keys_bytes keys; 
+    Vals_bytes.set_n vals_bytes vals;
+    Ints_bytes.set_n subs_bytes subtrees;
+
+    write_op ~offset ~bytes ()  
 
   let make_disk_node ~k ~m ~offset () = 
     let nb_of_vals = abs k in 
@@ -593,7 +656,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     | Insert_res_done of (int option * write_op list)  
     | Insert_res_read_data of block * insert_res_read_data_continuation  
     | Insert_res_allocate of int * insert_res_allocate_continuation 
-    | Insert_res_node_split of (Key.t * Val.t * node * write_op list) 
+    | Insert_res_node_split of (Key.t * Val.t * int * write_op list) 
   
   and insert_res_read_data_continuation = bytes -> insert_res  
 
@@ -650,26 +713,25 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     in 
 
     let continuation = (fun new_node_offset -> 
-      let new_node = make_leaf_node 
-        ~keys:right_keys_values 
-        ~vals:right_vals_values
-        ~offset:new_node_offset 
-        ~m 
-        ~nb_of_vals:(nb_of_vals / 2)  
-        () in  
-
-      let new_node = match new_node with
-        | Make_result_node n -> n
-        | _ -> failwith "Programmatic error"
-      in  
-
+      let new_node_write_op = 
+        write_leaf_node 
+          ~keys:right_keys_values 
+          ~vals:right_vals_values 
+          ~offset:new_node_offset
+          ~nb_of_vals:(nb_of_vals / 2)
+          ~m () 
+      in 
       let write_ops = 
         k_write_op      ::  
         n_keys_write_op :: 
         n_vals_write_op :: 
-        (full_write new_node) 
+        new_node_write_op :: []
       in 
-      Insert_res_node_split (median_key, median_value, new_node, write_ops) 
+      Insert_res_node_split (
+        median_key, 
+        median_value, 
+        new_node_offset, 
+        write_ops) 
     ) in
 
     Insert_res_allocate (node_length_of_m m, continuation) 
@@ -732,7 +794,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     in 
 
     let continuation = (fun new_node_offset -> 
-      let new_node = make_intermediate_node 
+      let new_node_write_op = write_intermediate_node 
         ~keys:right_keys_values 
         ~vals:right_vals_values
         ~subtrees:right_subtrees_values 
@@ -741,40 +803,31 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
         ~nb_of_vals:(nb_of_vals / 2)  
         () in  
 
-      let new_node = match new_node with
-        | Make_result_node n -> n
-        | _ -> failwith "Programmatic error"
-      in  
-
       let write_ops = 
         k_write_op      ::  
         n_keys_write_op :: 
         n_vals_write_op :: 
         n_subtrees_write_op ::
-        (full_write new_node @ write_ops) 
+        new_node_write_op   :: write_ops
       in 
-      Insert_res_node_split (median_key, median_value, new_node, write_ops) 
+      Insert_res_node_split (median_key, median_value, new_node_offset, write_ops) 
     ) in
 
     Insert_res_allocate (node_length_of_m m, continuation) 
 
-  let insert_make_root left_node right_node key value write_ops = 
+  let insert_make_root left_node right_node_offset key value write_ops = 
     let continuation = fun new_root_offset -> 
-      let new_root = make_intermediate_node 
+      let new_root_write_op = write_intermediate_node 
         ~keys:[| key |] 
         ~vals:[| value |] 
-        ~subtrees:[| node_offset left_node; node_offset right_node |] 
+        ~subtrees:[| node_offset left_node; right_node_offset |] 
         ~offset:new_root_offset 
         ~nb_of_vals:1 
         ~m:left_node.m 
         ()  
       in
-      let new_root = match new_root with 
-        | Make_result_node n -> n 
-        | _ -> assert(false) 
-      in 
 
-      let write_ops = (full_write new_root) @ write_ops in 
+      let write_ops = new_root_write_op :: write_ops in 
       Insert_res_done (Some new_root_offset, write_ops)
     in
     Insert_res_allocate (node_length_of_m left_node.m, continuation) 
@@ -782,7 +835,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
   let insert_handle_subtree_split_node 
             is_root
             ({vals; keys; subtrees; k; m; offset; _ } as node)  
-            keys_values subtrees_values pos (key, value, n, write_ops) = 
+            keys_values subtrees_values pos (key, value, n_offset, write_ops) = 
 
     (*
     Printf.printf "insert_handle_subtree_split_node: offset: %i, k: %i\n"  
@@ -810,7 +863,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
       let vals_values = array_insert vals_values pos value in 
       let subtrees_values = 
-        array_insert subtrees_values (pos + 1) (node_offset n) 
+        array_insert subtrees_values (pos + 1) n_offset 
       in 
 
       let k = incr_k k in
@@ -834,9 +887,9 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
             in 
             Insert_res_read_data (block, continuation') 
 
-          | Insert_res_node_split (key, value, right_node, write_ops) -> 
+          | Insert_res_node_split (key, value, right_node_offset, write_ops) -> 
             if is_root 
-            then insert_make_root node right_node key value write_ops 
+            then insert_make_root node right_node_offset key value write_ops 
             else ret  
         in
         aux @@ insert_split_intermediate_node 

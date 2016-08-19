@@ -109,7 +109,7 @@ let find ~storage ~offset ~m ~key () =
 
 type insert_res = 
   | Insert_res_done of (int option * bytes) 
-  | Insert_res_node_split of bytes * string * string * S8BT.node * (Btree.write_op list)  
+  | Insert_res_node_split of bytes * string * string * int * (Btree.write_op list)  
 
 let insert ~storage ~offset ~m ~key ~value () = 
   let n = make_node_from_offset ~storage ~offset ~m () in
@@ -121,8 +121,9 @@ let insert ~storage ~offset ~m ~key ~value () =
       Insert_res_done (new_root, storage)
     | S8BT.Insert_res_read_data (block, k) ->
       do_read_op storage block |> k |> aux storage  
-    | S8BT.Insert_res_node_split (k, v, n, write_ops)  -> 
-      Insert_res_node_split (storage, k, v, n, write_ops)  
+    | S8BT.Insert_res_node_split (k, v, n_offset, write_ops)  -> 
+      Insert_res_node_split (storage, k, v, n_offset, write_ops)  
+
     | S8BT.Insert_res_allocate (length, k) -> 
       let storage, offset = do_allocate storage length in 
       k offset |> aux storage  
@@ -140,21 +141,14 @@ let debug storage offset m =
 let () = 
   print_test_banner 1; 
   let m = 3 in 
-  let n = 
+  let write = 
     let keys =  [| "00000001" |] in
     let vals =  [| "0000000A" |] in 
-    S8BT.make_leaf_node ~keys ~vals ~offset:0 ~nb_of_vals:1  ~m () 
+    S8BT.write_leaf_node ~keys ~vals ~offset:0 ~nb_of_vals:1  ~m () 
   in 
-  let n = match n with
-    | S8BT.Make_result_node n -> n 
-    | _ -> assert(false) 
-  in 
-  printf "Node created, length on disk: %i\n"
-    (S8BT.node_length n);
-  let writes = S8BT.full_write n in 
   
-  let storage = Bytes.create (S8BT.node_length n) in 
-  List.iter (fun write -> do_write_op storage write) writes; 
+  let storage = Bytes.create (S8BT.node_length_of_m m) in 
+  do_write_op storage write ; 
 
   printf "storage:%s\n" (string_of_bytes storage);
 
@@ -178,13 +172,6 @@ let make_test_key_val s =
  * --------------------------------
  *)
 type btree23_01 = {
-  nroot : S8BT.node; 
-  n12 : S8BT.node;
-  n23 : S8BT.node; 
-  n48 : S8BT.node;
-  n12_offset : int;
-  n23_offset : int; 
-  n48_offset : int;
   storage : bytes;
   m : int;
 }
@@ -193,7 +180,7 @@ let make_test_btree23_01 () =
   let m = 3 in  (* 2-3 Btree *)
   let node_length = S8BT.node_length_of_m m in
 
-  let make_leaf_node offset key_strings  = 
+  let write_leaf_node offset key_strings  = 
     let nb_of_vals = List.length key_strings in 
     let keys, vals = List.fold_left (fun (keys, vals) s -> 
       let key, val_ = make_test_key_val s in
@@ -202,19 +189,17 @@ let make_test_btree23_01 () =
 
     let keys = Array.of_list @@ List.rev keys in 
     let vals = Array.of_list @@ List.rev vals in 
-    match S8BT.make_leaf_node ~keys ~vals ~nb_of_vals ~m ~offset () with
-    | S8BT.Make_result_node n -> n 
-    | _ -> assert(false) 
+    S8BT.write_leaf_node ~keys ~vals ~nb_of_vals ~m ~offset () 
   in
 
   let n48_offset = 3 * node_length in 
-  let n48 = make_leaf_node n48_offset ["48"] in 
+  let n48 = write_leaf_node n48_offset ["48"] in 
 
   let n23_offset = 2 * node_length in 
-  let n23 = make_leaf_node n23_offset ["23";"30"] in 
+  let n23 = write_leaf_node n23_offset ["23";"30"] in 
 
   let n12_offset = node_length in
-  let n12 = make_leaf_node n12_offset ["12"] in 
+  let n12 = write_leaf_node n12_offset ["12"] in 
   
   let nroot = 
     let offset = 0 in 
@@ -223,31 +208,14 @@ let make_test_btree23_01 () =
     let keys = [| key1; key2 |] in 
     let vals = [| val1; val2 |] in 
     let subtrees = [|n12_offset; n23_offset; n48_offset|] in 
-    let res = 
-      S8BT.make_intermediate_node ~keys ~vals ~subtrees ~offset ~nb_of_vals:2 ~m () 
-    in 
-    match res with
-    | S8BT.Make_result_node n -> n
-    | _ -> assert(false) 
+    S8BT.write_intermediate_node ~keys ~vals ~subtrees ~offset ~nb_of_vals:2 ~m () 
   in 
   
-  let all_nodes = [nroot; n12; n23; n48] in
-
+  let write_ops = [nroot; n48; n23; n12 ] in 
   let storage = Bytes.create (4 * node_length) in 
-  List.iter (fun n -> 
-    List.iter (fun write -> 
-      do_write_op storage write
-    ) (S8BT.full_write n)
-  ) all_nodes;
+  do_write_ops storage write_ops; 
 
   {
-    nroot;
-    n12;
-    n23;
-    n48;
-    n12_offset;
-    n23_offset;
-    n48_offset;
     storage;
     m;
   }
@@ -280,23 +248,17 @@ let () =
   ()
 
 
-let make_leaf_node_storage keys vals m = 
+let write_leaf_node_storage keys vals m = 
   assert(Array.length keys = Array.length vals); 
   let nb_of_vals = Array.length keys in 
   let offset = 0 in 
-  let n = 
-    S8BT.make_leaf_node ~keys ~vals ~nb_of_vals ~m ~offset () 
-    |> function 
-      | S8BT.Make_result_node n -> n 
-      | _-> assert(false) 
+  let write_op = 
+    S8BT.write_leaf_node ~keys ~vals ~nb_of_vals ~m ~offset () 
   in  
-  let node_length = S8BT.node_length n in 
+  let node_length = S8BT.node_length_of_m m in 
   let storage = Bytes.create node_length in 
-  List.iter (fun write_op -> 
-    do_write_op storage write_op
-  ) (S8BT.full_write n); 
-  storage
-
+  do_write_op storage write_op; 
+  storage 
 
 let () = 
   print_test_banner 3;
@@ -308,7 +270,7 @@ let () =
   let storage = ref @@ 
     let keys, vals = ([| key1; key2 |], [| val1; val2 |])
     in 
-    make_leaf_node_storage keys vals m 
+    write_leaf_node_storage keys vals m 
   in 
 
   let offset = 0 in 
@@ -418,11 +380,6 @@ let () =
  * --------------------------------
  *)
 type btree23_02 = {
-  nroot : S8BT.node; 
-  n12 : S8BT.node;
-  n23 : S8BT.node; 
-  n12_offset : int;
-  n23_offset : int; 
   storage : bytes;
   m : int;
 }
@@ -431,7 +388,7 @@ let make_test_btree23_02 () : btree23_02 =
   let m = 3 in  (* 2-3 Btree *)
   let node_length = S8BT.node_length_of_m m in
 
-  let make_leaf_node offset key_strings  = 
+  let write_leaf_node offset key_strings  = 
     let nb_of_vals = List.length key_strings in 
     let keys, vals = List.fold_left (fun (keys, vals) s -> 
       let key, val_ = make_test_key_val s in
@@ -440,16 +397,14 @@ let make_test_btree23_02 () : btree23_02 =
 
     let keys = Array.of_list @@ List.rev keys in 
     let vals = Array.of_list @@ List.rev vals in 
-    match S8BT.make_leaf_node ~keys ~vals ~nb_of_vals ~m ~offset () with
-    | S8BT.Make_result_node n -> n 
-    | _ -> assert(false) 
+    S8BT.write_leaf_node ~keys ~vals ~nb_of_vals ~m ~offset () 
   in
 
   let n23_offset = 2 * node_length in 
-  let n23 = make_leaf_node n23_offset ["23"] in 
+  let n23 = write_leaf_node n23_offset ["23"] in 
 
   let n12_offset = node_length in
-  let n12 = make_leaf_node n12_offset ["12"] in 
+  let n12 = write_leaf_node n12_offset ["12"] in 
   
   let nroot = 
     let offset = 0 in 
@@ -457,29 +412,15 @@ let make_test_btree23_02 () : btree23_02 =
     let keys = [| key1 |] in 
     let vals = [| val1 |] in 
     let subtrees = [|n12_offset; n23_offset |] in 
-    let res = 
-      S8BT.make_intermediate_node ~keys ~vals ~subtrees ~offset ~nb_of_vals:1 ~m () 
-    in 
-    match res with
-    | S8BT.Make_result_node n -> n
-    | _ -> assert(false) 
+    S8BT.write_intermediate_node 
+      ~keys ~vals ~subtrees ~offset ~nb_of_vals:1 ~m () 
   in 
   
-  let all_nodes = [nroot; n12; n23;] in
-
   let storage = Bytes.create (3 * node_length) in 
-  List.iter (fun n -> 
-    List.iter (fun write -> 
-      do_write_op storage write
-    ) (S8BT.full_write n)
-  ) all_nodes;
+  let write_ops = [nroot; n12; n23;] in
+  do_write_ops storage write_ops; 
 
   {
-    nroot;
-    n12;
-    n23;
-    n12_offset;
-    n23_offset;
     storage;
     m;
   }
@@ -596,3 +537,151 @@ let () =
     let key, value = make_test_key_val i in 
     find key value
   done
+
+module TypedS8 = Btree.Typed_bytes(String8) 
+
+let () = 
+  
+  let t = TypedS8.make 0 (Bytes.create (5 * String8.length)) in 
+  
+  TypedS8.set t 0 "12345678"; 
+  assert(TypedS8.get t 0 = "12345678");
+  
+  TypedS8.set t 4 "12345678"; 
+  assert(TypedS8.get t 4 = "12345678");
+
+  begin match TypedS8.set t 5 "12345678" with
+  | exception Invalid_argument _ -> () 
+  | _ -> assert(false) 
+  end;
+
+  begin match TypedS8.set t (-1) "12345678" with
+  | exception Invalid_argument _ -> () 
+  | _ -> assert(false) 
+  end;
+
+  begin match TypedS8.get t 5 with
+  | exception Invalid_argument _ -> () 
+  | _ -> assert(false) 
+  end;
+  
+  begin match TypedS8.get t (- 1) with
+  | exception Invalid_argument _ -> () 
+  | _ -> assert(false) 
+  end
+let a1to5 = [|
+  "00000001";
+  "00000002";
+  "00000003";
+  "00000004";
+  "00000005";
+|]
+
+let () =
+
+  let t = TypedS8.make 0 (Bytes.create (5 * String8.length)) in 
+
+  TypedS8.set_n t a1to5; 
+  let a' = TypedS8.get_n t 5 in 
+  assert(a1to5 = a'); 
+
+  begin match TypedS8.set_n t (Array.make 6 "") with
+  | exception Invalid_argument _ -> () 
+  | _ -> assert(false);
+  end;
+
+  let t1 = TypedS8.make 0 (Bytes.create (5 * String8.length)) in 
+  let t2 = TypedS8.make 0 (Bytes.create (5 * String8.length)) in 
+
+  let a1 = a1to5 in 
+  let a2 = [|
+    "0000000A";
+    "0000000B";
+    "0000000C";
+    "0000000D";
+    "0000000E";
+  |] in
+  TypedS8.set_n t1 a1;
+  TypedS8.set_n t2 a2;
+
+  TypedS8. blit t1 0 t2 0 5; 
+  assert(a1 = TypedS8.get_n t2 5);
+  
+  TypedS8.set_n t1 a1;
+  TypedS8.set_n t2 a2;
+  TypedS8. blit t1 2 t2 3 2; 
+  assert("0000000A" = TypedS8.get t2 0);
+  assert("0000000B" = TypedS8.get t2 1);
+  assert("0000000C" = TypedS8.get t2 2);
+  assert("00000003" = TypedS8.get t2 3);
+  assert("00000004" = TypedS8.get t2 4);
+
+  assert(a1 = TypedS8.get_n t1 5);
+  ()
+
+let () =
+
+  let t = TypedS8.make 0 (Bytes.create (5 * String8.length)) in 
+    (* reset the bytes *)
+
+  let a_minus3 = [|
+    "00000001";
+    "00000002";
+    "00000004";
+    "00000005";
+  |] in 
+  TypedS8.set_n t a_minus3; 
+
+  TypedS8.insert t 2 (Array.length a_minus3) "00000003"; 
+  assert(a1to5 = TypedS8.get_n t 5);
+  () 
+
+let () = 
+  
+  let t = TypedS8.make 0 (Bytes.create (5 * String8.length)) in 
+    (* reset the bytes *)
+
+  let a_minus5 = [|
+    "00000001";
+    "00000002";
+    "00000003";
+    "00000004";
+  |] in 
+  TypedS8.set_n t a_minus5; 
+
+  TypedS8.insert t 4 (Array.length a_minus5) "00000005"; 
+  assert(a1to5 = TypedS8.get_n t 5)
+
+let () =
+
+  let t = TypedS8.make 0 (Bytes.create (5 * String8.length)) in 
+    (* reset the bytes *)
+
+  let a_minus5 = [|
+    "00000001";
+    "00000002";
+    "00000003";
+    "00000004";
+  |] in 
+  TypedS8.set_n t a_minus5; 
+
+  TypedS8.insert t 4 (Array.length a_minus5) "00000005"; 
+  assert(a1to5 = TypedS8.get_n t 5)
+
+let () =
+
+  let t = TypedS8.make 0 (Bytes.create (5 * String8.length)) in 
+    (* reset the bytes *)
+
+  let a_minus1 = [|
+    "00000002";
+    "00000003";
+    "00000004";
+    "00000005";
+  |] in 
+  TypedS8.set_n t a_minus1; 
+
+  TypedS8.insert t 0 (Array.length a_minus1) "00000001"; 
+  assert(a1to5 = TypedS8.get_n t 5)
+
+
