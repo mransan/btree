@@ -391,7 +391,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
   (* returns the position index in which a new key/value should 
    * be inserted. *)
-  let find_key_insert_position (node:node_as_byte) key = 
+  let find_key_insert_position node key = 
     let {keys; k; _ } = node in 
     let nb_of_keys = nb_of_vals k in
 
@@ -406,7 +406,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     in 
     aux 0 
 
-  let insert_split_leaf_node (node:node_as_byte) keys_values vals_values = 
+  let insert_split_leaf_node node keys_values vals_values = 
 
     let {
       on_disk = {m; offset; }; 
@@ -462,7 +462,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
     Insert_res_allocate (node_length_of_m m, continuation) 
   
-  let insert_split_intermediate_node (node:node_as_byte) keys_values vals_values subs_values write_ops = 
+  let insert_split_intermediate_node node keys_values vals_values subs_values write_ops = 
 
     let {
       on_disk = {m; offset;}; 
@@ -547,7 +547,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     
   let insert_handle_subtree_split_node 
             is_root
-            (node:node_as_byte) 
+            node 
             keys_values subs_values pos node_split = 
 
     let {
@@ -593,7 +593,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     in 
     Insert_res_read_data (node_block node (), continuation) 
 
-  and insert_as_bytes ?is_root:(is_root = true) (node:node_as_byte) key value = 
+  and insert_as_bytes ?is_root:(is_root = true) node key value = 
 
     let {
       on_disk = {m; offset;}; 
@@ -605,7 +605,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     if is_leaf k 
     then
 
-      begin match find_key_insert_position node key with
+      match find_key_insert_position node key with
       | `Update pos -> begin 
         Vals.set vals pos value; 
         Keys.set keys pos key;
@@ -645,7 +645,6 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
           let write_op = make_write_op ~offset ~bytes () in 
           Insert_res_done (None, [write_op]) 
         end
-      end
 
     else (* not a leaf *)  
 
@@ -658,10 +657,9 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       end
 
       | `Insert pos -> 
-
-        let child_node = make_on_disk ~offset:(Ints.get subs pos) ~m () in 
+        let sub_node = make_on_disk ~offset:(Ints.get subs pos) ~m () in 
         
-        insert ~is_root:false child_node key value 
+        insert ~is_root:false sub_node key value 
         |> intercept_node_split (fun node_split -> 
           let keys_values = Keys.get_n keys (nb_of_vals k) in 
           let subs_values = Ints.get_n subs (nb_of_subtrees k) in 
@@ -678,56 +676,49 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
   and find_res_continuation = bytes -> find_res 
 
   let rec find (node:node_on_disk) key = 
-    let continuation = fun bytes -> 
-      find_as_bytes (make_as_bytes ~on_disk:node ~bytes () ) key 
-    in 
-    Find_res_read_data (node_block node () ,continuation)
+    Find_res_read_data (node_block node (), fun bytes -> 
+      find_as_bytes (make_as_bytes ~on_disk:node ~bytes ()) key
+    ) 
     
-  and find_as_bytes (node:node_as_byte) key = 
+  and find_as_bytes node key = 
     let {k; _ } = node in 
     if is_leaf k
-    then (* this is a leaf node *)
-      find_leaf_node node key
-    else 
-      find_leaf_internal_node node key 
+    then find_leaf_node node key
+    else find_leaf_internal_node node key 
 
-  and find_leaf_internal_node (node:node_as_byte) key = 
-    let { k; keys; _ } = node in 
+  and find_leaf_internal_node node key = 
+    let { k; keys; vals; subs; on_disk = {m; _}; _ } = node in 
     let nb_of_keys = nb_of_vals k in 
+
+    let find_in_subtree i = 
+      let sub_offset = Ints.get subs i in 
+      let sub_node = make_on_disk ~offset:sub_offset ~m () in 
+      find sub_node key
+    in
+
     let rec aux = function
-      | i when i = nb_of_keys -> find_in_subtree node key i 
+      | i when i = nb_of_keys -> find_in_subtree i 
       | i -> 
-        let key' = Keys.get keys i in
-        match Key.compare key' key with
-        | 0 ->  return_val_at node i 
-        | c when c >  0 -> find_in_subtree node key i 
+        match Key.compare (Keys.get keys i) key with
+        | 0 ->  
+          Find_res_val (Vals.get vals i) 
+        | c when c >  0 -> find_in_subtree i  
         | _ -> aux (i + 1)
     in  
     aux 0
 
-  and find_in_subtree (node:node_as_byte) key subtree_i =  
-    let {subs;on_disk = {m;_}; _} = node in 
-    let sub = make_on_disk ~offset:(Ints.get subs subtree_i) ~m () in 
-    find sub key 
-  
-  and find_leaf_node (node:node_as_byte) key =  
-    let {k; keys; _ } = node in 
+  and find_leaf_node node key =  
+    let {k; keys; vals; _ } = node in 
     let nb_of_keys = nb_of_vals k in 
-
     let rec aux = function
       | i when i = nb_of_keys -> Find_res_not_found
       | i -> 
-        let key' = Keys.get keys i in 
-        if key = key' 
-        then return_val_at node i 
+        if key = (Keys.get keys i) 
+        then Find_res_val (Vals.get vals i)
         else aux (i + 1) 
     in
     aux 0
   
-  and return_val_at (node:node_as_byte) i = 
-    let {vals; _ } = node in 
-    Find_res_val (Vals.get vals i) 
-
   type debug_res = 
     | Debug_res_read_data of block * debug_res_continuation 
     | Debug_res_done  

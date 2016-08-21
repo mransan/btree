@@ -471,8 +471,6 @@ let () =
   print_test_banner 9; 
   let {m; storage; _ }:btree23_01= make_test_btree23_01 () in 
     
-  debug storage 0 m;
-
   let make_test_key_val i = 
     let s = Printf.sprintf "%02i" i in 
     make_test_key_val s 
@@ -481,8 +479,6 @@ let () =
   let key24, val24 = make_test_key_val 24 in 
   begin match insert ~storage ~offset:0 ~m ~key:key24 ~value:val24 () with
   | Insert_res_done (Some new_root, storage) -> 
-    debug storage new_root  m;
-
     let find s expected = 
       assert_find ~storage ~offset:new_root ~m s expected
     in 
@@ -521,11 +517,9 @@ let () =
       end
     | _ -> assert(false)
     end;
-    Printf.printf "[%02i] root_offset: %06i, storage length: %06i\n" 
+    printf "[%02i] root_offset: %06i, storage length: %06i\n" 
       i !root_offset (Bytes.length !storage); 
   done; 
-
-  debug !storage !root_offset m;  
 
   let find s expected = 
     match find ~storage:!storage ~offset:!root_offset ~m ~key:s () with
@@ -545,7 +539,6 @@ let () =
 
   
   for i = 0  to until do 
-    Printf.printf "-testing value: %02i\n" i;
     let key, value = make_test_key_val i in 
     find key value
   done
