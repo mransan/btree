@@ -89,17 +89,10 @@ let do_allocate storage length =
   let storage = Bytes.extend storage 0 length in 
   (storage, offset) 
 
-let make_node_from_offset ~storage ~offset ~m () = 
-  let rec aux = function
-    | S8BT.Make_from_disk_node n -> n
-    | S8BT.Make_from_disk_read_data ({Btree.offset; length}, k) -> 
-      aux @@ k @@ Bytes.sub storage offset length
-  in 
-  aux (S8BT.make_node_from_offset ~offset ~m ()) 
-
 let find ~storage ~offset ~m ~key () = 
   
-  let n = S8BT.make_on_disk offset m in 
+  let n = S8BT.make_on_disk ~offset ~m () in 
+
   let rec aux = function
     | S8BT.Find_res_val x -> Some x 
     | S8BT.Find_res_not_found -> None 
@@ -113,7 +106,7 @@ type insert_res =
   | Insert_res_node_split of bytes * string * string * int * (Btree.write_op list)  
 
 let insert ~storage ~offset ~m ~key ~value () = 
-  let n = make_node_from_offset ~storage ~offset ~m () in
+  let n = S8BT.make_on_disk ~offset ~m () in
   let rec aux storage = function
     | S8BT.Insert_res_done (new_root, write_ops) -> 
       List.iter (fun write_op -> 
@@ -132,6 +125,7 @@ let insert ~storage ~offset ~m ~key ~value () =
   aux storage (S8BT.insert n key value)
 
 let debug storage offset m = 
+  Printf.printf "\n-- btree dump --\n";
   let rec aux = function
     | S8BT.Debug_res_done  -> () 
     | S8BT.Debug_res_read_data (block, k) -> 
@@ -208,8 +202,8 @@ let make_test_btree23_01 () =
     let key2, val2 = make_test_key_val "33" in 
     let keys = [| key1; key2 |] in 
     let vals = [| val1; val2 |] in 
-    let subtrees = [|n12_offset; n23_offset; n48_offset|] in 
-    S8BT.write_intermediate_node ~keys ~vals ~subtrees ~offset ~nb_of_vals:2 ~m () 
+    let subs = [|n12_offset; n23_offset; n48_offset|] in 
+    S8BT.write_intermediate_node ~keys ~vals ~subs ~offset ~nb_of_vals:2 ~m () 
   in 
   
   let write_ops = [nroot; n48; n23; n12 ] in 
@@ -261,6 +255,21 @@ let write_leaf_node_storage keys vals m =
   do_write_op storage write_op; 
   storage 
 
+let assert_find ~storage ~offset ~m s expected = 
+  match find ~storage ~offset ~m ~key:s () with
+  | None -> begin 
+    Printf.eprintf "- error key (%s) is not found \n" s; 
+    assert(false)
+  end 
+  | Some v -> 
+    if v = expected
+    then () 
+    else begin 
+      Printf.eprintf "- unexpected value, got (%s), expected (%s)\n" 
+        v expected; 
+      assert(false)
+    end 
+
 let () = 
   print_test_banner 3;
 
@@ -285,38 +294,36 @@ let () =
   in 
 
   let find s expected = 
-    assert(expected = find ~storage:!storage ~offset ~m ~key:s ())
+    assert_find ~storage:!storage ~offset ~m s expected 
   in
 
   printf "Inserting EE\n";
   let key3, val3 = make_test_key_val "EE" in 
   insert key3 val3;  
-  find key1 (Some val1); 
-  find key2 (Some val2); 
-  find key3 (Some val3); 
+  find key1 val1; 
+  find key2 val2; 
+  find key3 val3; 
   printf "Inserting AA\n";
   let key4, val4 = make_test_key_val "AA" in 
   insert key4 val4;  
-  find key1 (Some val1); 
-  find key2 (Some val2); 
-  find key3 (Some val3); 
-  find key4 (Some val4); 
+  find key1 val1; 
+  find key2 val2; 
+  find key3 val3; 
+  find key4 val4; 
   printf "Inserting CC\n";
   let key5, val5 = make_test_key_val "CC" in 
   insert key5 val5;  
-  find key1 (Some val1); 
-  find key2 (Some val2); 
-  find key3 (Some val3); 
-  find key4 (Some val4); 
-  find key5 (Some val5); 
+  find key1 val1; 
+  find key2 val2; 
+  find key3 val3; 
+  find key4 val4; 
+  find key5 val5; 
 
   (* Make sure update works *)
   let val2' = "ZZ000000" in 
   insert key2 val2'; 
-  find key2 (Some val2'); 
-
+  find key2 val2'; 
   () 
-
 
 let () =
   let a = [|1;2;3;4|] in 
@@ -412,9 +419,9 @@ let make_test_btree23_02 () : btree23_02 =
     let key1, val1 = make_test_key_val "18" in 
     let keys = [| key1 |] in 
     let vals = [| val1 |] in 
-    let subtrees = [|n12_offset; n23_offset |] in 
+    let subs = [|n12_offset; n23_offset |] in 
     S8BT.write_intermediate_node 
-      ~keys ~vals ~subtrees ~offset ~nb_of_vals:1 ~m () 
+      ~keys ~vals ~subs ~offset ~nb_of_vals:1 ~m () 
   in 
   
   let storage = Bytes.create (3 * node_length) in 
@@ -431,36 +438,37 @@ let () =
   let {storage; m; _} = make_test_btree23_02 () in 
 
   let storage = ref storage in 
-
+  
   let find s expected = 
-    assert(expected = find ~storage:!storage ~offset:0 ~m ~key:s ())
+    assert_find ~storage:!storage ~offset:0 ~m s expected 
   in
 
   let key15, val15 = make_test_key_val "15" in 
   begin match insert ~storage:!storage ~offset:0 ~m ~key:key15 ~value:val15 () with
   | Insert_res_done (None, storage') -> 
-    storage := storage';
-    find "00000012" (Some "12000000"); 
-    find "00000015" (Some "15000000"); 
-    find "00000018" (Some "18000000"); 
-    find "00000023" (Some "23000000"); 
+    let _ = storage' in  
+    find "00000012" "12000000"; 
+    find "00000015" "15000000"; 
+    find "00000018" "18000000"; 
+    find "00000023" "23000000"; 
   | _ -> assert(false)
   end;
-  
+
   let key16, val16 = make_test_key_val "16" in 
   begin match insert ~storage:!storage ~offset:0 ~m ~key:key16 ~value:val16 () with
   | Insert_res_done (None, storage') -> 
     storage := storage';
-    find "00000012" (Some "12000000"); 
-    find "00000015" (Some "15000000"); 
-    find "00000016" (Some "16000000"); 
-    find "00000018" (Some "18000000"); 
-    find "00000023" (Some "23000000"); 
+    find "00000012" "12000000"; 
+    find "00000015" "15000000"; 
+    find "00000016" "16000000"; 
+    find "00000018" "18000000"; 
+    find "00000023" "23000000"; 
   | _ -> assert(false)
   end;
   ()
 
 let () = 
+  print_test_banner 9; 
   let {m; storage; _ }:btree23_01= make_test_btree23_01 () in 
     
   debug storage 0 m;
@@ -473,16 +481,17 @@ let () =
   let key24, val24 = make_test_key_val 24 in 
   begin match insert ~storage ~offset:0 ~m ~key:key24 ~value:val24 () with
   | Insert_res_done (Some new_root, storage) -> 
+    debug storage new_root  m;
 
     let find s expected = 
-      assert(expected = find ~storage:storage ~offset:new_root ~m ~key:s ())
-    in
-    find "00000012" (Some "12000000"); 
-    find "00000018" (Some "18000000"); 
-    find "00000023" (Some "23000000"); 
-    find "00000024" (Some "24000000"); 
-    find "00000033" (Some "33000000"); 
-    find "00000048" (Some "48000000"); 
+      assert_find ~storage ~offset:new_root ~m s expected
+    in 
+    find "00000012" "12000000"; 
+    find "00000018" "18000000"; 
+    find "00000023" "23000000"; 
+    find "00000024" "24000000"; 
+    find "00000033" "33000000"; 
+    find "00000048" "48000000"; 
     () 
   | _ -> assert(false)
   end
@@ -543,9 +552,12 @@ let () =
 
 module TypedS8 = Btree.Typed_bytes(String8) 
 
+let make_typeds8 n = 
+  TypedS8.make ~offset:0 ~bytes:(Bytes.create (n * String8.length)) ()
+
 let () = 
   
-  let t = TypedS8.make 0 (Bytes.create (5 * String8.length)) in 
+  let t = make_typeds8 5 in
   
   TypedS8.set t 0 "12345678"; 
   assert(TypedS8.get t 0 = "12345678");
@@ -582,7 +594,7 @@ let a1to5 = [|
 
 let () =
 
-  let t = TypedS8.make 0 (Bytes.create (5 * String8.length)) in 
+  let t = make_typeds8 5 in
 
   TypedS8.set_n t a1to5; 
   let a' = TypedS8.get_n t 5 in 
@@ -593,8 +605,8 @@ let () =
   | _ -> assert(false);
   end;
 
-  let t1 = TypedS8.make 0 (Bytes.create (5 * String8.length)) in 
-  let t2 = TypedS8.make 0 (Bytes.create (5 * String8.length)) in 
+  let t1 = make_typeds8 5 in 
+  let t2 = make_typeds8 5 in
 
   let a1 = a1to5 in 
   let a2 = [|
@@ -624,7 +636,7 @@ let () =
 
 let () =
 
-  let t = TypedS8.make 0 (Bytes.create (5 * String8.length)) in 
+  let t = make_typeds8 5 in 
     (* reset the bytes *)
 
   let a_minus3 = [|
@@ -641,7 +653,7 @@ let () =
 
 let () = 
   
-  let t = TypedS8.make 0 (Bytes.create (5 * String8.length)) in 
+  let t = make_typeds8 5 in
     (* reset the bytes *)
 
   let a_minus5 = [|
@@ -657,7 +669,7 @@ let () =
 
 let () =
 
-  let t = TypedS8.make 0 (Bytes.create (5 * String8.length)) in 
+  let t = make_typeds8 5 in 
     (* reset the bytes *)
 
   let a_minus5 = [|
@@ -673,7 +685,7 @@ let () =
 
 let () =
 
-  let t = TypedS8.make 0 (Bytes.create (5 * String8.length)) in 
+  let t = make_typeds8 5 in 
     (* reset the bytes *)
 
   let a_minus1 = [|
