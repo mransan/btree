@@ -727,64 +727,49 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
   let indent_string  n = String.make n ' ' 
 
-
   let rec debug indent offset m = 
-
     let on_disk = {offset; m} in 
-
-    let continuation = fun bytes -> 
+    let node_block = node_block on_disk () in 
+    Debug_res_read_data (node_block, fun bytes ->
 
       let {
-        on_disk = {offset; m}; 
+        on_disk = {offset = _ ; m}; 
         k; 
-        keys; vals; subs; _ } =  make_as_bytes ~on_disk ~bytes ()in 
+        keys; subs; _ } =  make_as_bytes ~on_disk ~bytes ()in 
 
       let nb_of_vals  = nb_of_vals k in 
 
       if is_leaf k 
       then begin  
-        let keys = String.concat ", " (
-          Keys.get_n keys nb_of_vals
-          |> Array.to_list 
-          |> List.map Key.to_string 
-        ) in 
-        let vals = String.concat ", " (
-          Vals.get_n vals nb_of_vals
-          |> Array.to_list 
-          |> List.map Val.to_string 
-        ) in 
-        Printf.printf "%s+- Leaf [%06i] : [%s] | [%s] \n" (indent_string indent)
-        offset keys vals;
+        let keys_values = Keys.get_n keys nb_of_vals in 
+        Array.iter (fun key -> 
+          Printf.printf "%s  +-- %s\n" (indent_string indent) (Key.to_string key)
+        ) keys_values;
         Debug_res_done
       end
       else begin 
-        Printf.printf "%s+- Node [%06i] \n" (indent_string indent) offset;
-
         let rec aux i = 
+          aux2 i @@ debug (indent + 1) (Ints.get subs i) m 
+        
+        and aux2 i = function
+          | Debug_res_done -> 
+            if i = nb_of_vals 
+            then Debug_res_done 
+            else begin  
+              Printf.printf "%s|- %s\n" 
+                (indent_string indent) (Keys.get keys i |> Key.to_string); 
+              aux (i + 1) 
+            end 
 
-          let rec aux2 = function
-            | Debug_res_done -> 
-              if i = nb_of_vals 
-              then Debug_res_done 
-              else begin  
-                Printf.printf "%s|- Key [%02i] : %s\n" 
-                  (indent_string (indent + 1)) i (Keys.get keys i |> Key.to_string); 
-                aux (i + 1)
-              end 
-
-            | Debug_res_read_data (block, continuation) ->
-              let continuation' = fun bytes -> 
-                continuation bytes |> aux2 
-              in 
-              Debug_res_read_data (block, continuation') 
-          in
-          aux2 @@ debug (indent + 1) (Ints.get subs i) m 
+          | Debug_res_read_data (block, continuation) ->
+            let continuation' = fun bytes -> 
+              continuation bytes |> aux2 i  
+            in 
+            Debug_res_read_data (block, continuation') 
         in
         aux 0 
       end
-    in 
+    )
 
-    let node_block = node_block on_disk () in 
-    Debug_res_read_data (node_block, continuation) 
 
 end 

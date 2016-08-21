@@ -536,8 +536,8 @@ let () =
         assert(false)
       end 
   in
+  debug !storage !root_offset m;
 
-  
   for i = 0  to until do 
     let key, value = make_test_key_val i in 
     find key value
