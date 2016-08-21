@@ -291,10 +291,13 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
   let is_node_full ~k ~m () = 
     nb_of_vals k = m 
 
-  let nb_of_subtrees k = 
+  let nb_of_subs k = 
+    nb_of_vals k + 1 
+    (*
     if k < 0 
     then subtrees_access_in_leaf_node ()
     else k + 1 
+    *)
   
   let keys_offset_rel _ = 
     Int.length
@@ -328,6 +331,21 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     subs = Ints.make ~offset:(subs_offset_rel m) ~bytes ();
     bytes;
   }
+
+  let write_node 
+       ~keys ~vals ~subs ~offset ~k ~m () = 
+
+    let bytes = Bytes.create (node_length_of_m m) in 
+    let keys_bytes = Keys.make ~offset:(keys_offset_rel m) ~bytes () in 
+    let vals_bytes = Vals.make ~offset:(vals_offset_rel m) ~bytes () in 
+    let subs_bytes = Ints.make ~offset:(subs_offset_rel m) ~bytes () in 
+    
+    Int.to_bytes k bytes 0; 
+    Keys.set_n keys_bytes keys; 
+    Vals.set_n vals_bytes vals;
+    Ints.set_n subs_bytes subs;
+
+    make_write_op ~offset ~bytes ()  
 
   let write_leaf_node 
           ~keys ~vals ~offset ~nb_of_vals ~m () = 
@@ -405,129 +423,8 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
         |  _ -> aux (i + 1) 
     in 
     aux 0 
-
-  let insert_split_leaf_node node keys_values vals_values = 
-
-    let {
-      on_disk = {m; offset; }; 
-      keys; 
-      vals; 
-      bytes; _ } = node in 
-
-    assert(Array.length keys_values = Array.length vals_values);
-    
-    let nb_of_vals = Array.length keys_values in 
-
-    let (
-      median_key, 
-      left_keys_values, 
-      right_keys_values 
-    ) = array_median_split keys_values in 
-
-    let (
-      median_value, 
-      left_vals_values, 
-      right_vals_values 
-    ) = array_median_split vals_values in 
-
-    assert(Array.length left_vals_values = nb_of_vals / 2);
-    assert(Array.length right_vals_values = nb_of_vals / 2);
-    assert(Array.length left_keys_values = nb_of_vals / 2);
-    assert(Array.length right_keys_values = nb_of_vals / 2);
-
-    let k = - (nb_of_vals / 2) in  
-
-    Int.to_bytes k bytes 0; 
-    Keys.set_n keys left_keys_values; 
-    Vals.set_n vals left_vals_values; 
-
-    let left_write_op = make_write_op ~offset ~bytes () in
-
-    let continuation = (fun right_node_offset -> 
-      let right_write_op = 
-        write_leaf_node 
-          ~keys:right_keys_values 
-          ~vals:right_vals_values 
-          ~offset:right_node_offset
-          ~nb_of_vals:(nb_of_vals / 2)
-          ~m () 
-      in 
-      let write_ops = left_write_op :: right_write_op :: [] in 
-      Insert_res_node_split (
-        median_key, 
-        median_value, 
-        right_node_offset, 
-        write_ops) 
-    ) in
-
-    Insert_res_allocate (node_length_of_m m, continuation) 
   
-  let insert_split_intermediate_node node keys_values vals_values subs_values write_ops = 
-
-    let {
-      on_disk = {m; offset;}; 
-      bytes; 
-      keys; vals; subs; _ }  = node in 
-
-    assert(Array.length keys_values = Array.length vals_values);
-    assert(Array.length keys_values = Array.length subs_values - 1);
-    
-    let nb_of_vals = Array.length keys_values in 
-
-    let (
-      median_key, 
-      left_keys_values, 
-      right_keys_values 
-    ) = array_median_split keys_values in 
-
-    let (
-      median_value, 
-      left_vals_values, 
-      right_vals_values 
-    ) = array_median_split vals_values in 
-
-    let (
-      left_subs_values, 
-      right_subs_values
-    ) = array_half_split subs_values in
-
-    assert(Array.length left_vals_values = nb_of_vals / 2);
-    assert(Array.length right_vals_values = nb_of_vals / 2);
-    assert(Array.length left_keys_values = nb_of_vals / 2);
-    assert(Array.length right_keys_values = nb_of_vals / 2);
-    assert(Array.length left_subs_values = (nb_of_vals / 2) + 1);
-    assert(Array.length right_subs_values = (nb_of_vals / 2) + 1);
-
-    let k = (nb_of_vals / 2) in  
-      (* the new node is not a leaf! *)
-
-    Int.to_bytes k bytes 0; 
-    Keys.set_n keys left_keys_values; 
-    Vals.set_n vals left_vals_values; 
-    Ints.set_n subs left_subs_values; 
-
-    let left_write_op = make_write_op ~offset ~bytes () in 
-
-    let continuation = (fun right_node_offset -> 
-      let right_write_op = write_intermediate_node 
-        ~keys:right_keys_values 
-        ~vals:right_vals_values
-        ~subs:right_subs_values 
-        ~offset:right_node_offset 
-        ~m 
-        ~nb_of_vals:(nb_of_vals / 2)  
-        () in  
-
-      let write_ops = left_write_op :: right_write_op :: write_ops in  
-        
-      Insert_res_node_split (
-        median_key, median_value, right_node_offset, write_ops) 
-    ) in
-
-    Insert_res_allocate (node_length_of_m m, continuation) 
-
-  let insert_make_root left_node node_split = 
-    let (key, value, right_node_offset, write_ops) = node_split in 
+  let insert_make_root left_node right_node_offset key value write_ops = 
     let { on_disk = {offset; m; }; _} =  left_node in 
     let continuation = fun new_root_offset -> 
       let new_root_write_op = write_intermediate_node 
@@ -544,54 +441,95 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       Insert_res_done (Some new_root_offset, write_ops)
     in
     Insert_res_allocate (node_length_of_m m, continuation) 
-    
-  let insert_handle_subtree_split_node 
-            is_root
-            node 
-            keys_values subs_values pos node_split = 
+
+  let insert_at_pos 
+      ~is_root ~node ~pos ~key ~value 
+      ?sub:(sub = 0) ?write_ops:(write_ops = []) () = 
 
     let {
-      on_disk ={m; offset;}; 
-      keys; vals; subs; 
-      k;
-      bytes;
-    } = node in 
+      on_disk = {m; offset};
+      k; 
+      keys;vals;subs; 
+      bytes; _ 
+    } = node in  
 
-    let (key, value, n_offset, write_ops) = node_split in 
+    let needs_split = is_node_full ~k:(incr_k k) ~m () in
 
-    let vals_values = Vals.get_n vals (nb_of_vals k) in  
+    let keys_values = Keys.get_n keys (nb_of_vals k) in 
+    let vals_values = Vals.get_n vals (nb_of_vals k) in
+    let subs_values = Ints.get_n subs (nb_of_subs k) in
 
     let keys_values = array_insert keys_values pos key in  
     let vals_values = array_insert vals_values pos value in 
-    let subs_values = array_insert subs_values (pos + 1) n_offset in 
+    let subs_values = array_insert subs_values (pos + 1) sub in 
 
-    let k = incr_k k in
-    if is_node_full ~k ~m () 
-    then 
-      insert_split_intermediate_node node keys_values vals_values subs_values write_ops 
-      |> intercept_node_split (fun node_split ->
-        if is_root 
-        then insert_make_root node node_split 
-        else Insert_res_node_split node_split
-      ) 
+    if needs_split 
+    then begin  
+       (* There must be an even number of values so that 
+        * they can be evenly split between 2 nodes: the current
+        * node which is full and the new node which will
+        * be allocated/created below *)
 
-    else begin 
-      Int.to_bytes k bytes 0;
+      assert(nb_of_vals k mod 2 = 0); 
+      let (
+        median_key, 
+        left_keys_values, 
+        right_keys_values 
+      ) = array_median_split keys_values in 
+
+      let (
+        median_value, 
+        left_vals_values, 
+        right_vals_values 
+      ) = array_median_split vals_values in 
+
+      let (
+        left_subs_values, 
+        right_subs_values
+      ) = array_half_split subs_values in
+
+      let k = k / 2 in 
+      Int.to_bytes k bytes 0; 
+      Keys.set_n keys left_keys_values; 
+      Vals.set_n vals left_vals_values; 
+      Ints.set_n subs left_subs_values; 
+
+      let left_write_op = make_write_op ~offset ~bytes () in 
+      Insert_res_allocate (node_length_of_m m, (fun right_node_offset -> 
+        let right_write_op = write_node 
+          ~keys:right_keys_values 
+          ~vals:right_vals_values
+          ~subs:right_subs_values 
+          ~offset:right_node_offset 
+          ~m 
+          ~k
+          () in  
+
+        let write_ops = left_write_op :: right_write_op :: write_ops in  
+
+        if is_root
+        then 
+          insert_make_root 
+            node right_node_offset median_key median_value write_ops 
+        else 
+          Insert_res_node_split (
+            median_key, median_value, right_node_offset, write_ops) 
+      )) 
+    end
+    else 
+      (* no split needed *)
+      let k = incr_k k in 
+      Int.to_bytes k bytes 0; 
       Keys.set_n keys keys_values; 
       Vals.set_n vals vals_values; 
       Ints.set_n subs subs_values; 
-
-      let write_ops = make_write_op ~offset ~bytes () :: write_ops in 
-
-      Insert_res_done (None, write_ops) 
-    end
+      Insert_res_done (None, make_write_op ~offset ~bytes () :: write_ops)
 
   let rec insert ?is_root (node:node_on_disk) key value = 
-    let continuation = fun bytes -> 
-      let node = make_as_bytes ~on_disk:node ~bytes () in 
-      insert_as_bytes ?is_root node key value 
-    in 
-    Insert_res_read_data (node_block node (), continuation) 
+    Insert_res_read_data (node_block node (), (fun bytes -> 
+      let node =  make_as_bytes ~on_disk:node ~bytes () in 
+      insert_as_bytes ?is_root node key value
+    )) 
 
   and insert_as_bytes ?is_root:(is_root = true) node key value = 
 
@@ -602,71 +540,24 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       bytes;
     } = node in 
 
-    if is_leaf k 
-    then
-
-      match find_key_insert_position node key with
-      | `Update pos -> begin 
-        Vals.set vals pos value; 
-        Keys.set keys pos key;
-        let write_op = make_write_op ~offset ~bytes () in 
-        Insert_res_done (None, [write_op]) 
-      end
-
-      | `Insert pos -> 
-        let keys_values = Keys.get_n keys (nb_of_vals k) in 
-        let vals_values = Vals.get_n vals (nb_of_vals k) in 
-        let keys_values = array_insert keys_values pos key in  
-        let vals_values = array_insert vals_values pos value in 
-
-        let k = incr_k k in  
-
-        if is_node_full ~k ~m ()  
-        then
-          (* Node is full after the insertion. 
-           *
-           * - The median key/value should be extracted and returned 
-           *   to caller
-           * - The current node should be truncated in half
-           * - A new node should be created with the remaining key/values.
-           *)
-          insert_split_leaf_node node keys_values vals_values
-          |> intercept_node_split (fun node_split -> 
-            if is_root 
-            then insert_make_root node node_split 
-            else Insert_res_node_split node_split
-          )
-
-        else begin 
-          (* Node is not full, only need to update the bytes on disk *) 
-          Int.to_bytes k bytes 0; 
-          Keys.set_n keys keys_values;
-          Vals.set_n vals vals_values;
-          let write_op = make_write_op ~offset ~bytes () in 
-          Insert_res_done (None, [write_op]) 
-        end
-
-    else (* not a leaf *)  
-
-      begin match find_key_insert_position node key with
-      | `Update pos -> begin 
-        Vals.set vals pos value; 
-        Keys.set keys pos key;
-        let write_op = make_write_op ~offset ~bytes () in 
-        Insert_res_done (None, [write_op]) 
-      end
-
-      | `Insert pos -> 
+    match find_key_insert_position node key with
+    | `Update pos -> begin 
+      Vals.set vals pos value; 
+      Keys.set keys pos key;
+      let write_op = make_write_op ~offset ~bytes () in 
+      Insert_res_done (None, [write_op]) 
+    end
+    | `Insert pos -> 
+      if is_leaf k 
+      then 
+        insert_at_pos ~is_root ~node ~pos ~key ~value () 
+      else 
         let sub_node = make_on_disk ~offset:(Ints.get subs pos) ~m () in 
-        
         insert ~is_root:false sub_node key value 
-        |> intercept_node_split (fun node_split -> 
-          let keys_values = Keys.get_n keys (nb_of_vals k) in 
-          let subs_values = Ints.get_n subs (nb_of_subtrees k) in 
-          insert_handle_subtree_split_node 
-            is_root node keys_values subs_values pos node_split
-        )
-      end
+        |> intercept_node_split (fun (key, value, sub, write_ops) -> 
+          insert_at_pos 
+            ~is_root ~node ~pos ~key ~value ~sub ~write_ops ()  
+        ) 
 
   type find_res = 
     | Find_res_not_found 
@@ -727,15 +618,14 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
   let indent_string  n = String.make n ' ' 
 
-  let rec debug indent offset m = 
-    let on_disk = {offset; m} in 
-    let node_block = node_block on_disk () in 
+  let rec debug ?indent:(indent = 0) node = 
+    let node_block = node_block node () in 
     Debug_res_read_data (node_block, fun bytes ->
 
       let {
         on_disk = {offset = _ ; m}; 
         k; 
-        keys; subs; _ } =  make_as_bytes ~on_disk ~bytes ()in 
+        keys; subs; _ } =  make_as_bytes ~on_disk:node ~bytes ()in 
 
       let nb_of_vals  = nb_of_vals k in 
 
@@ -749,7 +639,8 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       end
       else begin 
         let rec aux i = 
-          aux2 i @@ debug (indent + 1) (Ints.get subs i) m 
+          let sub = make_on_disk ~offset:(Ints.get subs i) ~m () in 
+          aux2 i @@ debug ~indent:(indent + 1) sub
         
         and aux2 i = function
           | Debug_res_done -> 
@@ -770,6 +661,4 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
         aux 0 
       end
     )
-
-
 end 

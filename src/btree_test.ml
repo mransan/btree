@@ -131,7 +131,7 @@ let debug storage offset m =
     | S8BT.Debug_res_read_data (block, k) -> 
       do_read_op storage block |> k |> aux 
   in 
- aux @@ S8BT.debug 0 offset m  
+ aux @@ S8BT.debug (S8BT.make_on_disk ~offset ~m ()) 
 
 let () = 
   print_test_banner 1; 
