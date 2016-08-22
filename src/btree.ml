@@ -455,13 +455,6 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
     let needs_split = is_node_full ~k:(incr_k k) ~m () in
 
-    let keys_values = Keys.get_n keys (nb_of_vals k) in 
-    let vals_values = Vals.get_n vals (nb_of_vals k) in
-    let subs_values = Ints.get_n subs (nb_of_subs k) in
-
-    let keys_values = array_insert keys_values pos key in  
-    let vals_values = array_insert vals_values pos value in 
-    let subs_values = array_insert subs_values (pos + 1) sub in 
 
     if needs_split 
     then begin  
@@ -469,6 +462,13 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
         * they can be evenly split between 2 nodes: the current
         * node which is full and the new node which will
         * be allocated/created below *)
+      let keys_values = Keys.get_n keys (nb_of_vals k) in 
+      let vals_values = Vals.get_n vals (nb_of_vals k) in
+      let subs_values = Ints.get_n subs (nb_of_subs k) in
+
+      let keys_values = array_insert keys_values pos key in  
+      let vals_values = array_insert vals_values pos value in 
+      let subs_values = array_insert subs_values (pos + 1) sub in 
 
       assert(nb_of_vals k mod 2 = 0); 
       let (
@@ -516,14 +516,14 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
             median_key, median_value, right_node_offset, write_ops) 
       )) 
     end
-    else 
+    else begin  
       (* no split needed *)
-      let k = incr_k k in 
-      Int.to_bytes k bytes 0; 
-      Keys.set_n keys keys_values; 
-      Vals.set_n vals vals_values; 
-      Ints.set_n subs subs_values; 
+      Keys.insert keys pos (nb_of_vals k) key;
+      Vals.insert vals pos (nb_of_vals k) value;
+      Ints.insert subs (pos + 1) (nb_of_subs k) sub; 
+      Int.to_bytes (incr_k k) bytes 0; 
       Insert_res_done (None, make_write_op ~offset ~bytes () :: write_ops)
+    end
 
   let rec insert ?is_root (node:node_on_disk) key value = 
     Insert_res_read_data (node_block node (), (fun bytes -> 
