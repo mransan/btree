@@ -231,6 +231,21 @@ module Typed_bytes(FS:Fixed_size_sig) =  struct
     then invalid_arg "Typed_bytes.insert"
     else unsafe_insert t pos n v 
 
+  let insert_push_to_left t pos v = 
+    let ret = get t 0 in 
+    begin 
+      if pos <> 0 
+      then blit t 1 t 0 pos 
+    end;
+    set t pos v; 
+    ret  
+  
+  let insert_push_to_right t pos n v = 
+    let ret = get t (n - 1) in 
+    blit t pos t (pos + 1) (n - pos);
+    set t pos v; 
+    ret  
+
 end 
 
 module Make (Key:Key_sig) (Val:Val_sig) = struct  
@@ -347,6 +362,10 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
     make_write_op ~offset ~bytes ()  
 
+
+  let node_write_op {bytes; on_disk = {offset; _}; _ } = 
+    make_write_op ~offset ~bytes ()
+
   let write_leaf_node 
           ~keys ~vals ~offset ~nb_of_vals ~m () = 
 
@@ -447,7 +466,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       ?sub:(sub = 0) ?write_ops:(write_ops = []) () = 
 
     let {
-      on_disk = {m; offset};
+      on_disk = {m; _ };
       k; 
       keys;vals;subs; 
       bytes; _ 
@@ -462,58 +481,75 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
         * they can be evenly split between 2 nodes: the current
         * node which is full and the new node which will
         * be allocated/created below *)
-      let keys_values = Keys.get_n keys (nb_of_vals k) in 
-      let vals_values = Vals.get_n vals (nb_of_vals k) in
-      let subs_values = Ints.get_n subs (nb_of_subs k) in
-
-      let keys_values = array_insert keys_values pos key in  
-      let vals_values = array_insert vals_values pos value in 
-      let subs_values = array_insert subs_values (pos + 1) sub in 
 
       assert(nb_of_vals k mod 2 = 0); 
-      let (
-        median_key, 
-        left_keys_values, 
-        right_keys_values 
-      ) = array_median_split keys_values in 
-
-      let (
-        median_value, 
-        left_vals_values, 
-        right_vals_values 
-      ) = array_median_split vals_values in 
-
-      let (
-        left_subs_values, 
-        right_subs_values
-      ) = array_half_split subs_values in
 
       let k = k / 2 in 
-      Int.to_bytes k bytes 0; 
-      Keys.set_n keys left_keys_values; 
-      Vals.set_n vals left_vals_values; 
-      Ints.set_n subs left_subs_values; 
+        (* the number of values is split in half between the 
+         * current node and the newly allocated [right_node] *)
 
-      let left_write_op = make_write_op ~offset ~bytes () in 
       Insert_res_allocate (node_length_of_m m, (fun right_node_offset -> 
-        let right_write_op = write_node 
-          ~keys:right_keys_values 
-          ~vals:right_vals_values
-          ~subs:right_subs_values 
-          ~offset:right_node_offset 
-          ~m 
-          ~k
-          () in  
 
-        let write_ops = left_write_op :: right_write_op :: write_ops in  
+        Int.to_bytes k bytes 0;
+
+        let right_node =
+          let bytes = Bytes.copy bytes in 
+          Int.to_bytes k bytes 0; 
+          let on_disk = make_on_disk ~offset:right_node_offset ~m () in 
+          make_as_bytes ~on_disk ~bytes ()
+        in 
+
+        let {
+          keys = right_keys; vals = right_vals; subs = right_subs;_; 
+        } = right_node in
+
+        let right_median_i = nb_of_vals k in 
+        let nb_of_vals' = nb_of_vals k in 
+
+        let key, value = match Pervasives.compare pos right_median_i with
+          | 0 -> begin  
+            (* We need to copy right half part of [node] to the 
+             * new [right_node] *)
+            Keys.blit keys (right_median_i)   right_keys 0 nb_of_vals';  
+            Vals.blit vals (right_median_i)   right_vals 0 nb_of_vals';  
+            Ints.blit subs (right_median_i+1) right_subs 1 nb_of_vals';  
+            Ints.set  right_subs 0 sub; 
+            (key, value) 
+          end
+          | c when c > 0 -> begin 
+            Keys.blit keys (right_median_i) right_keys 0 nb_of_vals';  
+            Vals.blit vals (right_median_i) right_vals 0 nb_of_vals';  
+            Ints.blit subs (right_median_i) right_subs 0 (nb_of_vals' + 1);  
+            let pos = pos - (right_median_i + 1) in 
+            let key = Keys.insert_push_to_left right_keys pos key in 
+            let value = Vals.insert_push_to_left right_vals pos value in 
+            let _ = Ints.insert_push_to_left right_subs (pos + 1) sub in 
+            (key, value)
+          end  
+          | _ -> begin
+            Keys.blit keys (right_median_i) right_keys 0 nb_of_vals';  
+            Vals.blit vals (right_median_i) right_vals 0 nb_of_vals';  
+            Ints.blit subs (right_median_i) right_subs 0 (nb_of_vals' + 1);  
+            let key = Keys.insert_push_to_right keys pos nb_of_vals' key in 
+            let value = Vals.insert_push_to_right vals pos nb_of_vals' value in 
+            let _ = Ints.insert_push_to_right subs (pos + 1) (nb_of_vals' + 1) sub in 
+            (key, value)
+          end
+        in 
+
+        let write_ops = 
+          node_write_op node ::
+          node_write_op right_node :: write_ops 
+        in 
 
         if is_root
         then 
           insert_make_root 
-            node right_node_offset median_key median_value write_ops 
+            node right_node_offset key value write_ops 
         else 
           Insert_res_node_split (
-            median_key, median_value, right_node_offset, write_ops) 
+            key, value, right_node_offset, write_ops) 
+
       )) 
     end
     else begin  
@@ -522,7 +558,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       Vals.insert vals pos (nb_of_vals k) value;
       Ints.insert subs (pos + 1) (nb_of_subs k) sub; 
       Int.to_bytes (incr_k k) bytes 0; 
-      Insert_res_done (None, make_write_op ~offset ~bytes () :: write_ops)
+      Insert_res_done (None, node_write_op node :: write_ops)
     end
 
   let rec insert ?is_root (node:node_on_disk) key value = 

@@ -156,6 +156,10 @@ let make_test_key_val s =
   assert(String.length s = 2);
   (Printf.sprintf "000000%s" s, Printf.sprintf "%s000000" s) 
 
+let make_test_key_val4 s = 
+  assert(String.length s = 4);
+  (Printf.sprintf "0000%s" s, Printf.sprintf "%s0000" s) 
+
 
 (* --------------------------------
  *
@@ -443,14 +447,16 @@ let () =
     assert_find ~storage:!storage ~offset:0 ~m s expected 
   in
 
+
   let key15, val15 = make_test_key_val "15" in 
   begin match insert ~storage:!storage ~offset:0 ~m ~key:key15 ~value:val15 () with
-  | Insert_res_done (None, storage') -> 
-    let _ = storage' in  
+  | Insert_res_done (None, storage') -> begin  
+    storage := storage';
     find "00000012" "12000000"; 
     find "00000015" "15000000"; 
     find "00000018" "18000000"; 
     find "00000023" "23000000"; 
+  end
   | _ -> assert(false)
   end;
 
@@ -475,7 +481,7 @@ let () =
     let s = Printf.sprintf "%02i" i in 
     make_test_key_val s 
   in 
-
+  
   let key24, val24 = make_test_key_val 24 in 
   begin match insert ~storage ~offset:0 ~m ~key:key24 ~value:val24 () with
   | Insert_res_done (Some new_root, storage) -> 
@@ -536,9 +542,71 @@ let () =
         assert(false)
       end 
   in
-  debug !storage !root_offset m;
+  (* debug !storage !root_offset m;
+   *)
 
   for i = 0  to until do 
+    let key, value = make_test_key_val i in 
+    find key value
+  done
+
+let () = 
+  print_test_banner 11; 
+
+  let m = 11 in 
+  let root_offset = ref 0 in 
+  
+  let make_test_key_val i = 
+    let s = Printf.sprintf "%04i" i in 
+    make_test_key_val4 s 
+  in 
+
+  let write = 
+    let key0, val0 = make_test_key_val 0 in 
+    S8BT.write_leaf_node 
+      ~keys:[|key0|] ~vals:[|val0|] ~offset:!root_offset ~nb_of_vals:1 ~m ()
+  in 
+
+  let storage = ref @@ Bytes.create (S8BT.node_length_of_m m) in 
+  do_write_op !storage write;
+
+  let until = 9999 in 
+  
+  for i = until downto 1 do 
+    let key, value = make_test_key_val i in 
+    begin match insert ~storage:!storage  ~offset:!root_offset ~m ~key ~value () with
+    | Insert_res_done (new_root, storage') -> 
+      storage := storage'; 
+      begin match new_root with
+      | None -> () 
+      | Some new_root -> root_offset := new_root
+      end
+    | _ -> assert(false)
+    end;
+    printf "[%02i] root_offset: %06i, storage length: %06i\n" 
+      i !root_offset (Bytes.length !storage); 
+  done; 
+
+  let find s expected = 
+    match find ~storage:!storage ~offset:!root_offset ~m ~key:s () with
+    | None -> begin 
+      Printf.eprintf "- error key (%s) is not found \n" s; 
+      assert(false)
+    end 
+    | Some v -> 
+      if v = expected
+      then () 
+      else begin 
+        Printf.eprintf "- unexpected value, got (%s), expected (%s)\n" 
+          v expected; 
+        assert(false)
+      end 
+  in
+  (* debug !storage !root_offset m;
+   *)
+
+  debug !storage !root_offset m;
+  for i = 0 to until do 
     let key, value = make_test_key_val i in 
     find key value
   done
