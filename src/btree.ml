@@ -36,31 +36,6 @@ module Int = struct
       bytes (pos + 3) (char_of_int Int32.(to_int (logand 0xffl (shift_right i 24))))
 end 
 
-let array_insert a pos v = 
-  let a_len = Array.length a in 
-  let new_a_len = a_len + 1 in 
-  let new_a = Array.make new_a_len v in 
-  Array.blit a 0 new_a 0 pos; 
-  Array.blit a pos new_a (pos + 1) (a_len - pos); 
-  new_a  
-
-let array_median_split a = 
-  let a_len = Array.length a in 
-  assert(a_len mod 2 = 1); 
-  let median = a_len / 2 in 
-  let median_val = Array.get a median in 
-  let left = Array.sub a 0 median in 
-  let right = Array.sub a (median + 1) median in 
-  (median_val, left, right)  
-
-let array_half_split a = 
-  let a_len = Array.length a in 
-  assert(a_len mod 2 = 0); 
-  let half = a_len / 2 in 
-  let left = Array.sub a 0 half in 
-  let right = Array.sub a half half in 
-  (left, right)  
-
 (** Module signature for types which can be encoded in a fixed size array
     of bytes. 
 
@@ -203,10 +178,6 @@ module Typed_bytes(FS:Fixed_size_sig) =  struct
     Array.iteri (fun i e -> unsafe_set t i e ) a  
 
   let set_n ({offset; bytes} as t) a =  
-    (*
-    Printf.printf "bytes length: %i, offset: %i, array length: %i, FS length: %i\n"
-    (Bytes.length bytes) offset (Array.length a) FS.length; 
-    *)
     if Bytes.length bytes < offset + (Array.length a) * FS.length 
     then invalid_arg "Typed_bytes.set_n"
     else unsafe_set_n t a 
@@ -231,7 +202,7 @@ module Typed_bytes(FS:Fixed_size_sig) =  struct
     then invalid_arg "Typed_bytes.insert"
     else unsafe_insert t pos n v 
 
-  let insert_push_to_left t pos v = 
+  let insert_pop_left t pos v = 
     let ret = get t 0 in 
     begin 
       if pos <> 0 
@@ -240,7 +211,7 @@ module Typed_bytes(FS:Fixed_size_sig) =  struct
     set t pos v; 
     ret  
   
-  let insert_push_to_right t pos n v = 
+  let insert_pop_right t pos n v = 
     let ret = get t (n - 1) in 
     blit t pos t (pos + 1) (n - pos);
     set t pos v; 
@@ -249,28 +220,6 @@ module Typed_bytes(FS:Fixed_size_sig) =  struct
 end 
 
 module Make (Key:Key_sig) (Val:Val_sig) = struct  
-
-  type invariant_violation = 
-    | K_can_never_be_zero 
-    | Subtrees_access_in_leaf_node
-
-  let string_of_invariant_violation = function
-    | K_can_never_be_zero -> "[k] can never be zero" 
-    | Subtrees_access_in_leaf_node -> "[subtrees] are empty in leaf node"
-
-  exception Failure of invariant_violation
-
-  let () = 
-    Printexc.register_printer (function 
-      | Failure iv -> Some (string_of_invariant_violation iv)
-      | _ -> None 
-    ) 
-
-  let k_can_never_be_zero () = 
-    raise (Failure K_can_never_be_zero) 
-
-  let subtrees_access_in_leaf_node () = 
-    raise (Failure Subtrees_access_in_leaf_node)
 
   module Keys = Typed_bytes(Key) 
   module Vals = Typed_bytes(Val)
@@ -292,36 +241,30 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
   let make_on_disk ~offset ~m () = {offset; m}
 
-
   let is_leaf k = 
     (* we use the sign of k to determine whether the node is a
        leaf node or an intermediate node *)
-    k < 0 
+    k <= 0 
   
   let incr_k k = 
-    if k < 0 then k - 1 else k + 1 
+    if k <= 0 then k - 1 else k + 1 
 
   let nb_of_vals = Pervasives.abs  
 
   let is_node_full ~k ~m () = 
-    nb_of_vals k = m 
+    nb_of_vals k = (m - 1) 
 
   let nb_of_subs k = 
     nb_of_vals k + 1 
-    (*
-    if k < 0 
-    then subtrees_access_in_leaf_node ()
-    else k + 1 
-    *)
   
-  let keys_offset_rel _ = 
+  let keys_offset _ = 
     Int.length
 
-  let vals_offset_rel m  =
-    keys_offset_rel m + ((m - 1) * Key.length)
+  let vals_offset m  =
+    keys_offset m + ((m - 1) * Key.length)
 
-  let subs_offset_rel m = 
-    vals_offset_rel  m + ((m - 1) * Val.length)
+  let subs_offset m = 
+    vals_offset  m + ((m - 1) * Val.length)
 
   let keys_length m = 
     (m - 1) * Key.length
@@ -341,9 +284,9 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
   let make_as_bytes ~on_disk:({m;_ } as on_disk) ~bytes () = {
     on_disk; 
     k = Int.of_bytes bytes 0; 
-    keys = Keys.make ~offset:(keys_offset_rel m) ~bytes (); 
-    vals = Vals.make ~offset:(vals_offset_rel m) ~bytes (); 
-    subs = Ints.make ~offset:(subs_offset_rel m) ~bytes ();
+    keys = Keys.make ~offset:(keys_offset m) ~bytes (); 
+    vals = Vals.make ~offset:(vals_offset m) ~bytes (); 
+    subs = Ints.make ~offset:(subs_offset m) ~bytes ();
     bytes;
   }
 
@@ -351,9 +294,9 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
        ~keys ~vals ~subs ~offset ~k ~m () = 
 
     let bytes = Bytes.create (node_length_of_m m) in 
-    let keys_bytes = Keys.make ~offset:(keys_offset_rel m) ~bytes () in 
-    let vals_bytes = Vals.make ~offset:(vals_offset_rel m) ~bytes () in 
-    let subs_bytes = Ints.make ~offset:(subs_offset_rel m) ~bytes () in 
+    let keys_bytes = Keys.make ~offset:(keys_offset m) ~bytes () in 
+    let vals_bytes = Vals.make ~offset:(vals_offset m) ~bytes () in 
+    let subs_bytes = Ints.make ~offset:(subs_offset m) ~bytes () in 
     
     Int.to_bytes k bytes 0; 
     Keys.set_n keys_bytes keys; 
@@ -361,7 +304,6 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     Ints.set_n subs_bytes subs;
 
     make_write_op ~offset ~bytes ()  
-
 
   let node_write_op {bytes; on_disk = {offset; _}; _ } = 
     make_write_op ~offset ~bytes ()
@@ -372,8 +314,8 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     let bytes = Bytes.create (node_length_of_m m) in 
     let k = - nb_of_vals in 
 
-    let keys_bytes = Keys.make ~offset:(keys_offset_rel m) ~bytes () in 
-    let vals_bytes = Vals.make ~offset:(vals_offset_rel m) ~bytes () in 
+    let keys_bytes = Keys.make ~offset:(keys_offset m) ~bytes () in 
+    let vals_bytes = Vals.make ~offset:(vals_offset m) ~bytes () in 
 
     Int.to_bytes k bytes 0; 
     Keys.set_n keys_bytes keys; 
@@ -387,9 +329,9 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     let bytes = Bytes.create (node_length_of_m m) in 
     let k = nb_of_vals in 
     
-    let keys_bytes = Keys.make ~offset:(keys_offset_rel m) ~bytes () in 
-    let vals_bytes = Vals.make ~offset:(vals_offset_rel m) ~bytes () in 
-    let subs_bytes = Ints.make ~offset:(subs_offset_rel m) ~bytes () in 
+    let keys_bytes = Keys.make ~offset:(keys_offset m) ~bytes () in 
+    let vals_bytes = Vals.make ~offset:(vals_offset m) ~bytes () in 
+    let subs_bytes = Ints.make ~offset:(subs_offset m) ~bytes () in 
     
     Int.to_bytes k bytes 0; 
     Keys.set_n keys_bytes keys; 
@@ -413,16 +355,14 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     | Insert_res_done _ -> ret 
 
     | Insert_res_read_data (block, continuation) -> 
-      let continuation' = fun bytes -> 
-        continuation bytes |> intercept_node_split f 
-      in 
-      Insert_res_read_data (block, continuation') 
+      Insert_res_read_data (block, fun bytes -> 
+        continuation bytes |> intercept_node_split f
+      ) 
 
     | Insert_res_allocate (length, continuation) -> 
-      let continuation' = fun offset -> 
+      Insert_res_allocate (length, fun offset ->
         continuation offset |> intercept_node_split f 
-      in 
-      Insert_res_allocate (length, continuation') 
+      )
 
     | Insert_res_node_split node_split  -> f node_split 
 
@@ -445,7 +385,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
   
   let insert_make_root left_node right_node_offset key value write_ops = 
     let { on_disk = {offset; m; }; _} =  left_node in 
-    let continuation = fun new_root_offset -> 
+    Insert_res_allocate (node_length_of_m m, fun new_root_offset -> 
       let new_root_write_op = write_intermediate_node 
         ~keys:[| key |] 
         ~vals:[| value |] 
@@ -455,11 +395,9 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
         ~m
         ()  
       in
-
       let write_ops = new_root_write_op :: write_ops in 
       Insert_res_done (Some new_root_offset, write_ops)
-    in
-    Insert_res_allocate (node_length_of_m m, continuation) 
+    )
 
   let insert_at_pos 
       ~is_root ~node ~pos ~key ~value 
@@ -472,15 +410,14 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       bytes; _ 
     } = node in  
 
-    let needs_split = is_node_full ~k:(incr_k k) ~m () in
-
+    let needs_split = is_node_full ~k ~m () in
 
     if needs_split 
     then begin  
-       (* There must be an even number of values so that 
-        * they can be evenly split between 2 nodes: the current
-        * node which is full and the new node which will
-        * be allocated/created below *)
+      (* There must be an even number of values so that 
+       * they can be evenly split between 2 nodes: the current
+       * node which is full and the new node which will
+       * be allocated/created below *)
 
       assert(nb_of_vals k mod 2 = 0); 
 
@@ -493,7 +430,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
         Int.to_bytes k bytes 0;
 
         let right_node =
-          let bytes = Bytes.copy bytes in 
+          let bytes = Bytes.create (node_length_of_m m) in 
           Int.to_bytes k bytes 0; 
           let on_disk = make_on_disk ~offset:right_node_offset ~m () in 
           make_as_bytes ~on_disk ~bytes ()
@@ -505,34 +442,28 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
         let right_median_i = nb_of_vals k in 
         let nb_of_vals' = nb_of_vals k in 
+        let nb_of_subs' = nb_of_subs k in 
 
-        let key, value = match Pervasives.compare pos right_median_i with
+        Keys.blit keys (right_median_i) right_keys 0 nb_of_vals';  
+        Vals.blit vals (right_median_i) right_vals 0 nb_of_vals';  
+        Ints.blit subs (right_median_i) right_subs 0 nb_of_subs';
+
+        let median_key, median_value = match Pervasives.compare pos right_median_i with
           | 0 -> begin  
-            (* We need to copy right half part of [node] to the 
-             * new [right_node] *)
-            Keys.blit keys (right_median_i)   right_keys 0 nb_of_vals';  
-            Vals.blit vals (right_median_i)   right_vals 0 nb_of_vals';  
-            Ints.blit subs (right_median_i+1) right_subs 1 nb_of_vals';  
             Ints.set  right_subs 0 sub; 
             (key, value) 
           end
           | c when c > 0 -> begin 
-            Keys.blit keys (right_median_i) right_keys 0 nb_of_vals';  
-            Vals.blit vals (right_median_i) right_vals 0 nb_of_vals';  
-            Ints.blit subs (right_median_i) right_subs 0 (nb_of_vals' + 1);  
             let pos = pos - (right_median_i + 1) in 
-            let key = Keys.insert_push_to_left right_keys pos key in 
-            let value = Vals.insert_push_to_left right_vals pos value in 
-            let _ = Ints.insert_push_to_left right_subs (pos + 1) sub in 
+            let key = Keys.insert_pop_left right_keys pos key in 
+            let value = Vals.insert_pop_left right_vals pos value in 
+            let _ = Ints.insert_pop_left right_subs (pos + 1) sub in 
             (key, value)
           end  
           | _ -> begin
-            Keys.blit keys (right_median_i) right_keys 0 nb_of_vals';  
-            Vals.blit vals (right_median_i) right_vals 0 nb_of_vals';  
-            Ints.blit subs (right_median_i) right_subs 0 (nb_of_vals' + 1);  
-            let key = Keys.insert_push_to_right keys pos nb_of_vals' key in 
-            let value = Vals.insert_push_to_right vals pos nb_of_vals' value in 
-            let _ = Ints.insert_push_to_right subs (pos + 1) (nb_of_vals' + 1) sub in 
+            let key = Keys.insert_pop_right keys pos nb_of_vals' key in 
+            let value = Vals.insert_pop_right vals pos nb_of_vals' value in 
+            let _ = Ints.insert_pop_right subs (pos + 1) nb_of_subs' sub in 
             (key, value)
           end
         in 
@@ -545,11 +476,10 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
         if is_root
         then 
           insert_make_root 
-            node right_node_offset key value write_ops 
+            node right_node_offset median_key median_value write_ops 
         else 
           Insert_res_node_split (
-            key, value, right_node_offset, write_ops) 
-
+            median_key, median_value, right_node_offset, write_ops) 
       )) 
     end
     else begin  
@@ -583,7 +513,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       let write_op = make_write_op ~offset ~bytes () in 
       Insert_res_done (None, [write_op]) 
     end
-    | `Insert pos -> 
+    | `Insert pos -> begin 
       if is_leaf k 
       then 
         insert_at_pos ~is_root ~node ~pos ~key ~value () 
@@ -594,6 +524,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
           insert_at_pos 
             ~is_root ~node ~pos ~key ~value ~sub ~write_ops ()  
         ) 
+    end
 
   type find_res = 
     | Find_res_not_found 

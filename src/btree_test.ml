@@ -25,7 +25,7 @@ let printf =
   else (fun fmt -> Printf.ifprintf stdout fmt)  
 
 let print_test_banner i = 
-  Printf.printf "\n-- Test [%03i] -- \n" i 
+  Printf.printf "\n-- Test [%03i] -- \n%!" i 
 
 let string_of_bytes bytes : string = 
   let len = Bytes.length bytes in 
@@ -329,16 +329,6 @@ let () =
   find key2 val2'; 
   () 
 
-let () =
-  let a = [|1;2;3;4|] in 
-  let a'= Btree.array_insert a 0 0 in 
-  assert(a' = [|0;1;2;3;4|]);
-  let a'= Btree.array_insert a 1 0 in 
-  assert(a' = [|1;0;2;3;4|]);
-  let a'= Btree.array_insert a 4 0 in 
-  assert(a' = [|1;2;3;4;0|]);
-  ()
-
 let () = 
 
   print_test_banner 7;
@@ -498,62 +488,7 @@ let () =
   | _ -> assert(false)
   end
 
-let () = 
-  print_test_banner 10;
-  let {m; storage; _ }:btree23_01= make_test_btree23_01 () in 
-
-  let make_test_key_val i = 
-    let s = Printf.sprintf "%02i" i in 
-    make_test_key_val s 
-  in 
-
-  let storage = ref storage in 
-  let root_offset = ref 0 in 
-
-  let until = 99 in 
-  
-  for i = 0 to until do 
-    let key, value = make_test_key_val i in 
-    begin match insert ~storage:!storage  ~offset:!root_offset ~m ~key ~value () with
-    | Insert_res_done (new_root, storage') -> 
-      storage := storage'; 
-      begin match new_root with
-      | None -> () 
-      | Some new_root -> root_offset := new_root
-      end
-    | _ -> assert(false)
-    end;
-    printf "[%02i] root_offset: %06i, storage length: %06i\n" 
-      i !root_offset (Bytes.length !storage); 
-  done; 
-
-  let find s expected = 
-    match find ~storage:!storage ~offset:!root_offset ~m ~key:s () with
-    | None -> begin 
-      Printf.eprintf "- error key (%s) is not found \n" s; 
-      assert(false)
-    end 
-    | Some v -> 
-      if v = expected
-      then () 
-      else begin 
-        Printf.eprintf "- unexpected value, got (%s), expected (%s)\n" 
-          v expected; 
-        assert(false)
-      end 
-  in
-  (* debug !storage !root_offset m;
-   *)
-
-  for i = 0  to until do 
-    let key, value = make_test_key_val i in 
-    find key value
-  done
-
-let () = 
-  print_test_banner 11; 
-
-  let m = 11 in 
+let run_random_inserts ~m ~nb_of_inserts () = 
   let root_offset = ref 0 in 
   
   let make_test_key_val i = 
@@ -562,18 +497,22 @@ let () =
   in 
 
   let write = 
-    let key0, val0 = make_test_key_val 0 in 
     S8BT.write_leaf_node 
-      ~keys:[|key0|] ~vals:[|val0|] ~offset:!root_offset ~nb_of_vals:1 ~m ()
+      ~keys:[||] ~vals:[||] ~offset:!root_offset ~nb_of_vals:0 ~m ()
   in 
 
   let storage = ref @@ Bytes.create (S8BT.node_length_of_m m) in 
   do_write_op !storage write;
 
-  let until = 9999 in 
+  let inserts = Array.make nb_of_inserts 0 in  
   
-  for i = until downto 1 do 
-    let key, value = make_test_key_val i in 
+  for i = 0 to nb_of_inserts - 1 do 
+    let nb = Random.int 9999 in 
+    Array.set inserts i nb;
+    let key, value = make_test_key_val nb in 
+    (*
+    Printf.printf "inserting key: %s \n%!" key;
+    *)
     begin match insert ~storage:!storage  ~offset:!root_offset ~m ~key ~value () with
     | Insert_res_done (new_root, storage') -> 
       storage := storage'; 
@@ -602,14 +541,32 @@ let () =
         assert(false)
       end 
   in
-  (* debug !storage !root_offset m;
-   *)
-
-  debug !storage !root_offset m;
-  for i = 0 to until do 
-    let key, value = make_test_key_val i in 
+  
+  Array.iter (fun nb -> 
+    let key, value = make_test_key_val nb in 
     find key value
-  done
+  ) inserts
+
+let nb_of_inserts = 1000
+
+let () = 
+  Random.self_init ()
+
+let () = 
+  print_test_banner 11; 
+  run_random_inserts ~m:3 ~nb_of_inserts ()
+
+let () = 
+  print_test_banner 12; 
+  run_random_inserts ~m:5 ~nb_of_inserts ()
+
+let () = 
+  print_test_banner 13;
+  run_random_inserts ~m:11 ~nb_of_inserts ()
+
+let () = 
+  print_test_banner 14;
+  run_random_inserts ~m:51 ~nb_of_inserts ()
 
 module TypedS8 = Btree.Typed_bytes(String8) 
 
