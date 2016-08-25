@@ -139,7 +139,7 @@ let () =
   let write = 
     let keys =  [| "00000001" |] in
     let vals =  [| "0000000A" |] in 
-    S8BT.write_leaf_node ~keys ~vals ~offset:0 ~nb_of_vals:1  ~m () 
+    S8BT.write_leaf_node ~keys ~vals ~offset:0 ~m () 
   in 
   
   let storage = Bytes.create (S8BT.node_length_of_m m) in 
@@ -180,7 +180,6 @@ let make_test_btree23_01 () =
   let node_length = S8BT.node_length_of_m m in
 
   let write_leaf_node offset key_strings  = 
-    let nb_of_vals = List.length key_strings in 
     let keys, vals = List.fold_left (fun (keys, vals) s -> 
       let key, val_ = make_test_key_val s in
       (key::keys, val_::vals)
@@ -188,7 +187,7 @@ let make_test_btree23_01 () =
 
     let keys = Array.of_list @@ List.rev keys in 
     let vals = Array.of_list @@ List.rev vals in 
-    S8BT.write_leaf_node ~keys ~vals ~nb_of_vals ~m ~offset () 
+    S8BT.write_leaf_node ~keys ~vals ~m ~offset () 
   in
 
   let n48_offset = 3 * node_length in 
@@ -207,7 +206,7 @@ let make_test_btree23_01 () =
     let keys = [| key1; key2 |] in 
     let vals = [| val1; val2 |] in 
     let subs = [|n12_offset; n23_offset; n48_offset|] in 
-    S8BT.write_intermediate_node ~keys ~vals ~subs ~offset ~nb_of_vals:2 ~m () 
+    S8BT.write_intermediate_node ~keys ~vals ~subs ~offset ~m () 
   in 
   
   let write_ops = [nroot; n48; n23; n12 ] in 
@@ -249,10 +248,9 @@ let () =
 
 let write_leaf_node_storage keys vals m = 
   assert(Array.length keys = Array.length vals); 
-  let nb_of_vals = Array.length keys in 
   let offset = 0 in 
   let write_op = 
-    S8BT.write_leaf_node ~keys ~vals ~nb_of_vals ~m ~offset () 
+    S8BT.write_leaf_node ~keys ~vals ~m ~offset () 
   in  
   let node_length = S8BT.node_length_of_m m in 
   let storage = Bytes.create node_length in 
@@ -391,7 +389,6 @@ let make_test_btree23_02 () : btree23_02 =
   let node_length = S8BT.node_length_of_m m in
 
   let write_leaf_node offset key_strings  = 
-    let nb_of_vals = List.length key_strings in 
     let keys, vals = List.fold_left (fun (keys, vals) s -> 
       let key, val_ = make_test_key_val s in
       (key::keys, val_::vals)
@@ -399,7 +396,7 @@ let make_test_btree23_02 () : btree23_02 =
 
     let keys = Array.of_list @@ List.rev keys in 
     let vals = Array.of_list @@ List.rev vals in 
-    S8BT.write_leaf_node ~keys ~vals ~nb_of_vals ~m ~offset () 
+    S8BT.write_leaf_node ~keys ~vals ~m ~offset () 
   in
 
   let n23_offset = 2 * node_length in 
@@ -415,7 +412,7 @@ let make_test_btree23_02 () : btree23_02 =
     let vals = [| val1 |] in 
     let subs = [|n12_offset; n23_offset |] in 
     S8BT.write_intermediate_node 
-      ~keys ~vals ~subs ~offset ~nb_of_vals:1 ~m () 
+      ~keys ~vals ~subs ~offset ~m () 
   in 
   
   let storage = Bytes.create (3 * node_length) in 
@@ -498,7 +495,7 @@ let run_random_inserts ~m ~nb_of_inserts () =
 
   let write = 
     S8BT.write_leaf_node 
-      ~keys:[||] ~vals:[||] ~offset:!root_offset ~nb_of_vals:0 ~m ()
+      ~keys:[||] ~vals:[||] ~offset:!root_offset ~m ()
   in 
 
   let storage = ref @@ Bytes.create (S8BT.node_length_of_m m) in 

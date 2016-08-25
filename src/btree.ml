@@ -290,55 +290,49 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     bytes;
   }
 
-  let write_node 
-       ~keys ~vals ~subs ~offset ~k ~m () = 
-
-    let bytes = Bytes.create (node_length_of_m m) in 
-    let keys_bytes = Keys.make ~offset:(keys_offset m) ~bytes () in 
-    let vals_bytes = Vals.make ~offset:(vals_offset m) ~bytes () in 
-    let subs_bytes = Ints.make ~offset:(subs_offset m) ~bytes () in 
-    
-    Int.to_bytes k bytes 0; 
-    Keys.set_n keys_bytes keys; 
-    Vals.set_n vals_bytes vals;
-    Ints.set_n subs_bytes subs;
-
-    make_write_op ~offset ~bytes ()  
-
   let node_write_op {bytes; on_disk = {offset; _}; _ } = 
     make_write_op ~offset ~bytes ()
 
   let write_leaf_node 
-          ~keys ~vals ~offset ~nb_of_vals ~m () = 
+          ~keys ~vals ~offset ~m () = 
 
-    let bytes = Bytes.create (node_length_of_m m) in 
-    let k = - nb_of_vals in 
+    if Array.length keys <> Array.length vals 
+    then invalid_arg "Btree.Make.write_leaf_node"
+    else 
+      let nb_of_vals = Array.length keys in 
+      let bytes = Bytes.create (node_length_of_m m) in 
+      let k = - nb_of_vals in 
 
-    let keys_bytes = Keys.make ~offset:(keys_offset m) ~bytes () in 
-    let vals_bytes = Vals.make ~offset:(vals_offset m) ~bytes () in 
+      let keys_bytes = Keys.make ~offset:(keys_offset m) ~bytes () in 
+      let vals_bytes = Vals.make ~offset:(vals_offset m) ~bytes () in 
 
-    Int.to_bytes k bytes 0; 
-    Keys.set_n keys_bytes keys; 
-    Vals.set_n vals_bytes vals;
+      Int.to_bytes k bytes 0; 
+      Keys.set_n keys_bytes keys; 
+      Vals.set_n vals_bytes vals;
 
-    make_write_op ~offset ~bytes ()  
+      make_write_op ~offset ~bytes ()  
 
   let write_intermediate_node 
-          ~keys ~vals ~subs ~offset ~nb_of_vals ~m () = 
+          ~keys ~vals ~subs ~offset ~m () = 
 
-    let bytes = Bytes.create (node_length_of_m m) in 
-    let k = nb_of_vals in 
-    
-    let keys_bytes = Keys.make ~offset:(keys_offset m) ~bytes () in 
-    let vals_bytes = Vals.make ~offset:(vals_offset m) ~bytes () in 
-    let subs_bytes = Ints.make ~offset:(subs_offset m) ~bytes () in 
-    
-    Int.to_bytes k bytes 0; 
-    Keys.set_n keys_bytes keys; 
-    Vals.set_n vals_bytes vals;
-    Ints.set_n subs_bytes subs;
+    if Array.length keys <> Array.length vals || 
+       Array.length keys <> Array.length subs - 1  
+    then invalid_arg "Btree.Make.write_intermediate_node"
+    else 
+      let nb_of_vals = Array.length keys in
+      let bytes = Bytes.create (node_length_of_m m) in 
+      let k = nb_of_vals in 
+      
+      let keys_bytes = Keys.make ~offset:(keys_offset m) ~bytes () in 
+      let vals_bytes = Vals.make ~offset:(vals_offset m) ~bytes () in 
+      let subs_bytes = Ints.make ~offset:(subs_offset m) ~bytes () in 
+      
+      Int.to_bytes k bytes 0; 
+      Keys.set_n keys_bytes keys; 
+      Vals.set_n vals_bytes vals;
+      Ints.set_n subs_bytes subs;
 
-    make_write_op ~offset ~bytes ()  
+      make_write_op ~offset ~bytes ()  
 
   type insert_res = 
     | Insert_res_done of (int option * write_op list)  
@@ -366,6 +360,8 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
     | Insert_res_node_split node_split  -> f node_split 
 
+
+
   (* returns the position index in which a new key/value should 
    * be inserted. *)
   let find_key_insert_position node key = 
@@ -383,6 +379,54 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     in 
     aux 0 
   
+  let find_key_insert_position node key = 
+    let {keys; k; _ } = node in 
+
+    let rec aux lower upper = 
+      match upper - lower with
+      | 0 -> `Insert upper  
+      | 1 -> 
+        begin match Key.compare key (Keys.get keys lower) with 
+        | c  when c > 0 -> `Insert upper 
+        | _ -> `Insert lower 
+        end 
+      | _ -> 
+        let median = (lower + upper) / 2  in 
+        match Key.compare key (Keys.get keys median) with
+        | 0 -> `Update median 
+        | c when c > 0 -> aux median upper 
+        | _ -> aux lower median 
+    in
+
+    let lower = 0 in 
+    let upper = nb_of_vals k in 
+
+    if Keys.get keys lower = key 
+    then `Update lower
+    else 
+      if Keys.get keys upper =  key
+      then `Update upper 
+      else  aux lower upper
+  
+      (*
+  let find_key_insert_position ({keys; k; _ } as node) key = 
+
+    let res = find_key_insert_position' node key in 
+    let res_string = match res with
+      | `Insert i -> Printf.sprintf "Insert (%03i)" i
+      | `Update i -> Printf.sprintf "Update (%03i)" i
+    in  
+    let a = Keys.get_n keys (nb_of_vals k) in 
+    Printf.printf "[";
+    Array.iter (fun e -> 
+      Printf.printf "%s, " (Key.to_string e); 
+    ) a; 
+    Printf.printf "], key: %s, res: %s\n"
+    (Key.to_string key) res_string;
+    res
+    *)
+
+  
   let insert_make_root left_node right_node_offset key value write_ops = 
     let { on_disk = {offset; m; }; _} =  left_node in 
     Insert_res_allocate (node_length_of_m m, fun new_root_offset -> 
@@ -391,7 +435,6 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
         ~vals:[| value |] 
         ~subs:[| offset; right_node_offset |] 
         ~offset:new_root_offset 
-        ~nb_of_vals:1 
         ~m
         ()  
       in
