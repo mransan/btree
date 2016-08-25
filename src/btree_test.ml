@@ -41,19 +41,26 @@ let string_of_bytes bytes : string =
   in 
   String.concat " " (aux 0) 
 
+
+let of_bytes_counter = ref 0 
+let compare_counter = ref 0 
+
 module String8 = struct 
   type t = string 
 
   let length = 8 
 
   let of_bytes bytes pos = 
+    incr of_bytes_counter;
     Bytes.sub_string bytes pos length
 
   let to_bytes s bytes pos = 
     assert(String.length s = length); 
     Bytes.blit_string s 0 bytes pos length
 
-  let compare (l:string) (r:string) = Pervasives.compare l r  
+  let compare (l:string) (r:string) = 
+    incr compare_counter; 
+    Pervasives.compare l r  
 
   let to_string x = x 
 
@@ -61,7 +68,10 @@ end
 
 module S8BT = Btree.Make(String8)(String8) 
 
+
+let write_op_counter = ref 0 
 let do_write_op storage ({Btree.offset; bytes; } : Btree.write_op) = 
+  incr write_op_counter;
   printf "- writing to offset %i%s\n" 
     offset 
     (string_of_bytes bytes); 
@@ -76,7 +86,10 @@ let do_write_ops storage write_ops =
     do_write_op storage write_op
   ) write_ops
 
+
+let read_op_counter = ref 0 
 let do_read_op storage ({Btree.offset;length} as block) = 
+  incr read_op_counter;
   printf "- reading block: %s" (Btree.string_of_block block);
   let sub = Bytes.sub storage offset length in
   printf "%s\n" (string_of_bytes sub); 
@@ -486,6 +499,13 @@ let () =
   end
 
 let run_random_inserts ~m ~nb_of_inserts () = 
+
+  let t0 = Unix.gettimeofday () in 
+
+  of_bytes_counter := 0; 
+  compare_counter := 0;
+  write_op_counter := 0;
+  read_op_counter := 0;
   let root_offset = ref 0 in 
   
   let make_test_key_val i = 
@@ -539,10 +559,23 @@ let run_random_inserts ~m ~nb_of_inserts () =
       end 
   in
   
+  let t1 = Unix.gettimeofday () in 
+  
   Array.iter (fun nb -> 
     let key, value = make_test_key_val nb in 
     find key value
-  ) inserts
+  ) inserts;
+  
+  let t2 = Unix.gettimeofday () in 
+
+  Printf.printf ( 
+    "m = %03i, node: %06i, storage: %010i, of_bytes: %06i, compare: %06i, " ^^ 
+    "write_op: %06i, read_op: %06i, " ^^ 
+    "time insert: %08.4f, time find: %08.4f\n"
+    )  
+    m (S8BT.node_length_of_m m) (Bytes.length !storage) !of_bytes_counter !compare_counter 
+    !write_op_counter !read_op_counter 
+    (t1 -. t0) (t2 -. t1) 
 
 let nb_of_inserts = 1000
 
@@ -564,6 +597,10 @@ let () =
 let () = 
   print_test_banner 14;
   run_random_inserts ~m:51 ~nb_of_inserts ()
+
+let () = 
+  print_test_banner 15;
+  run_random_inserts ~m:101 ~nb_of_inserts ()
 
 module TypedS8 = Btree.Typed_bytes(String8) 
 

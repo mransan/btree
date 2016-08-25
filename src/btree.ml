@@ -360,72 +360,36 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
     | Insert_res_node_split node_split  -> f node_split 
 
-
-
   (* returns the position index in which a new key/value should 
    * be inserted. *)
-  let find_key_insert_position node key = 
-    let {keys; k; _ } = node in 
-    let nb_of_keys = nb_of_vals k in
-
-    let rec aux = function 
-      | i when i = nb_of_keys -> `Insert i
-      | i -> 
-        let key' = Keys.get keys i in 
-        match Key.compare key' key  with
-        | 0 -> `Update i 
-        | c when c > 0 -> `Insert i 
-        |  _ -> aux (i + 1) 
-    in 
-    aux 0 
-  
   let find_key_insert_position node key = 
     let {keys; k; _ } = node in 
 
     let rec aux lower upper = 
       match upper - lower with
-      | 0 -> `Insert upper  
-      | 1 -> 
+      | 0 -> `Insert_at upper  
+      | 1 ->
         begin match Key.compare key (Keys.get keys lower) with 
-        | c  when c > 0 -> `Insert upper 
-        | _ -> `Insert lower 
+        | c  when c > 0 -> `Insert_at upper 
+        | _ -> `Insert_at lower 
         end 
       | _ -> 
         let median = (lower + upper) / 2  in 
         match Key.compare key (Keys.get keys median) with
-        | 0 -> `Update median 
+        | 0 -> `Update_at median 
         | c when c > 0 -> aux median upper 
         | _ -> aux lower median 
     in
-
+    
     let lower = 0 in 
     let upper = nb_of_vals k in 
 
     if Keys.get keys lower = key 
-    then `Update lower
+    then `Update_at lower
     else 
       if Keys.get keys upper =  key
-      then `Update upper 
+      then `Update_at upper 
       else  aux lower upper
-  
-      (*
-  let find_key_insert_position ({keys; k; _ } as node) key = 
-
-    let res = find_key_insert_position' node key in 
-    let res_string = match res with
-      | `Insert i -> Printf.sprintf "Insert (%03i)" i
-      | `Update i -> Printf.sprintf "Update (%03i)" i
-    in  
-    let a = Keys.get_n keys (nb_of_vals k) in 
-    Printf.printf "[";
-    Array.iter (fun e -> 
-      Printf.printf "%s, " (Key.to_string e); 
-    ) a; 
-    Printf.printf "], key: %s, res: %s\n"
-    (Key.to_string key) res_string;
-    res
-    *)
-
   
   let insert_make_root left_node right_node_offset key value write_ops = 
     let { on_disk = {offset; m; }; _} =  left_node in 
@@ -550,13 +514,13 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     } = node in 
 
     match find_key_insert_position node key with
-    | `Update pos -> begin 
+    | `Update_at pos -> begin 
       Vals.set vals pos value; 
       Keys.set keys pos key;
       let write_op = make_write_op ~offset ~bytes () in 
       Insert_res_done (None, [write_op]) 
     end
-    | `Insert pos -> begin 
+    | `Insert_at pos -> begin 
       if is_leaf k 
       then 
         insert_at_pos ~is_root ~node ~pos ~key ~value () 
@@ -585,40 +549,22 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     let {k; _ } = node in 
     if is_leaf k
     then find_leaf_node node key
-    else find_leaf_internal_node node key 
+    else find_internal_node node key 
 
-  and find_leaf_internal_node node key = 
-    let { k; keys; vals; subs; on_disk = {m; _}; _ } = node in 
-    let nb_of_keys = nb_of_vals k in 
-
-    let find_in_subtree i = 
+  and find_internal_node node key = 
+    let { vals; subs; on_disk = {m; _}; _ } = node in 
+    match find_key_insert_position node key with
+    | `Update_at i -> Find_res_val (Vals.get vals i)
+    | `Insert_at i -> 
       let sub_offset = Ints.get subs i in 
       let sub_node = make_on_disk ~offset:sub_offset ~m () in 
       find sub_node key
-    in
-
-    let rec aux = function
-      | i when i = nb_of_keys -> find_in_subtree i 
-      | i -> 
-        match Key.compare (Keys.get keys i) key with
-        | 0 ->  
-          Find_res_val (Vals.get vals i) 
-        | c when c >  0 -> find_in_subtree i  
-        | _ -> aux (i + 1)
-    in  
-    aux 0
 
   and find_leaf_node node key =  
-    let {k; keys; vals; _ } = node in 
-    let nb_of_keys = nb_of_vals k in 
-    let rec aux = function
-      | i when i = nb_of_keys -> Find_res_not_found
-      | i -> 
-        if key = (Keys.get keys i) 
-        then Find_res_val (Vals.get vals i)
-        else aux (i + 1) 
-    in
-    aux 0
+    let {vals; _ } = node in 
+    match find_key_insert_position node key with
+    | `Update_at i -> Find_res_val (Vals.get vals i) 
+    | `Insert_at _ -> Find_res_not_found 
   
   type debug_res = 
     | Debug_res_read_data of block * debug_res_continuation 
@@ -663,10 +609,9 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
             end 
 
           | Debug_res_read_data (block, continuation) ->
-            let continuation' = fun bytes -> 
+            Debug_res_read_data (block, fun bytes ->
               continuation bytes |> aux2 i  
-            in 
-            Debug_res_read_data (block, continuation') 
+            )
         in
         aux 0 
       end
