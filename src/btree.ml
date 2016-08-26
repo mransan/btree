@@ -199,7 +199,7 @@ module Typed_bytes(FS:Fixed_size_sig) =  struct
     if pos  < 0  ||
        pos  > n  ||   (* we allow append at the end *)
        (Bytes.length bytes < offset + (n + 1) * FS.length)
-    then invalid_arg "Typed_bytes.insert"
+    then invalid_arg (Printf.sprintf "Typed_bytes.insert (pos: %i, n: %i)" pos n)
     else unsafe_insert t pos n v 
 
   let insert_pop_left t pos v = 
@@ -363,33 +363,45 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
   (* returns the position index in which a new key/value should 
    * be inserted. *)
   let find_key_insert_position node key = 
-    let {keys; k; _ } = node in 
 
-    let rec aux lower upper = 
+    let rec aux keys key lower upper = 
       match upper - lower with
-      | 0 -> `Insert_at upper  
-      | 1 ->
-        begin match Key.compare key (Keys.get keys lower) with 
-        | c  when c > 0 -> `Insert_at upper 
-        | _ -> `Insert_at lower 
-        end 
+      | 0 | 1 -> `Insert_at upper
+         (* The [upper] value is chosen because the [Typed_bytes.insert] 
+          * function will insert values by shifting the the value to the right *) 
       | _ -> 
         let median = (lower + upper) / 2  in 
         match Key.compare key (Keys.get keys median) with
         | 0 -> `Update_at median 
-        | c when c > 0 -> aux median upper 
-        | _ -> aux lower median 
+        | c when c > 0 -> aux keys key median upper 
+        | _ -> aux keys key lower median 
     in
     
-    let lower = 0 in 
-    let upper = nb_of_vals k in 
+    let {keys; k; _ } = node in 
+    let nb_of_vals = nb_of_vals k in
 
-    if Keys.get keys lower = key 
-    then `Update_at lower
+    (* Boundary condition check first *)
+
+    if nb_of_vals = 0 
+    then 
+      (* When the btree is empty then the root node will 
+       * have 0 key/values *)
+      `Insert_at 0 
     else 
-      if Keys.get keys upper =  key
-      then `Update_at upper 
-      else  aux lower upper
+      let lower = 0 in 
+      let upper = nb_of_vals - 1 in 
+
+      (* Boundary check if the [key] is outside of the initial
+       * [lower] and [upper] bound. The [aux] function which implements
+       * the binary search relies on that *) 
+      match Key.compare key (Keys.get keys lower) with
+      | 0 -> `Update_at lower 
+      | c when c < 0 -> `Insert_at lower 
+      | _ -> 
+         match Key.compare key (Keys.get keys upper) with
+         | 0 -> `Update_at upper 
+         | c when c > 0 -> `Insert_at (upper+1) 
+         | _ -> aux keys key lower (upper + 1) 
   
   let insert_make_root left_node right_node_offset key value write_ops = 
     let { on_disk = {offset; m; }; _} =  left_node in 
@@ -408,7 +420,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
   let insert_at_pos 
       ~is_root ~node ~pos ~key ~value 
-      ?sub:(sub = 0) ?write_ops:(write_ops = []) () = 
+      ?right_sub:(right_sub = 0) ?write_ops:(write_ops = []) () = 
 
     let {
       on_disk = {m; _ };
@@ -457,20 +469,20 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
         let median_key, median_value = match Pervasives.compare pos right_median_i with
           | 0 -> begin  
-            Ints.set  right_subs 0 sub; 
+            Ints.set right_subs 0 right_sub; 
             (key, value) 
           end
           | c when c > 0 -> begin 
             let pos = pos - (right_median_i + 1) in 
             let key = Keys.insert_pop_left right_keys pos key in 
             let value = Vals.insert_pop_left right_vals pos value in 
-            let _ = Ints.insert_pop_left right_subs (pos + 1) sub in 
+            let _ = Ints.insert_pop_left right_subs (pos + 1) right_sub in 
             (key, value)
           end  
           | _ -> begin
             let key = Keys.insert_pop_right keys pos nb_of_vals' key in 
             let value = Vals.insert_pop_right vals pos nb_of_vals' value in 
-            let _ = Ints.insert_pop_right subs (pos + 1) nb_of_subs' sub in 
+            let _ = Ints.insert_pop_right subs (pos + 1) nb_of_subs' right_sub in 
             (key, value)
           end
         in 
@@ -493,7 +505,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       (* no split needed *)
       Keys.insert keys pos (nb_of_vals k) key;
       Vals.insert vals pos (nb_of_vals k) value;
-      Ints.insert subs (pos + 1) (nb_of_subs k) sub; 
+      Ints.insert subs (pos + 1) (nb_of_subs k) right_sub; 
       Int.to_bytes (incr_k k) bytes 0; 
       Insert_res_done (None, node_write_op node :: write_ops)
     end
@@ -527,9 +539,9 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       else 
         let sub_node = make_on_disk ~offset:(Ints.get subs pos) ~m () in 
         insert ~is_root:false sub_node key value 
-        |> intercept_node_split (fun (key, value, sub, write_ops) -> 
+        |> intercept_node_split (fun (key, value, right_sub, write_ops) -> 
           insert_at_pos 
-            ~is_root ~node ~pos ~key ~value ~sub ~write_ops ()  
+            ~is_root ~node ~pos ~key ~value ~right_sub ~write_ops ()  
         ) 
     end
 
@@ -546,25 +558,16 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     ) 
     
   and find_as_bytes node key = 
-    let {k; _ } = node in 
-    if is_leaf k
-    then find_leaf_node node key
-    else find_internal_node node key 
-
-  and find_internal_node node key = 
-    let { vals; subs; on_disk = {m; _}; _ } = node in 
+    let {k; vals; subs; on_disk = {m; _}; _ } = node in 
     match find_key_insert_position node key with
     | `Update_at i -> Find_res_val (Vals.get vals i)
     | `Insert_at i -> 
-      let sub_offset = Ints.get subs i in 
-      let sub_node = make_on_disk ~offset:sub_offset ~m () in 
-      find sub_node key
-
-  and find_leaf_node node key =  
-    let {vals; _ } = node in 
-    match find_key_insert_position node key with
-    | `Update_at i -> Find_res_val (Vals.get vals i) 
-    | `Insert_at _ -> Find_res_not_found 
+      if is_leaf k 
+      then Find_res_not_found
+      else 
+        let sub_offset = Ints.get subs i in 
+        let sub_node = make_on_disk ~offset:sub_offset ~m () in 
+        find sub_node key
   
   type debug_res = 
     | Debug_res_read_data of block * debug_res_continuation 
