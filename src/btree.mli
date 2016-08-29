@@ -22,9 +22,9 @@
 (** Module signature for types which can be encoded in a fixed size array
     of bytes. 
 
-    This module is crucial as the B-Tree implementation that all the pieces
-    of data can be encoded in a fixed size so that the location on disk of 
-    element of the tree can be computed efficiently.
+    This module is crucial as this particular B-Tree implementation is based on 
+    the assumption that each piece of data (key, values in particular) has a 
+    fixed size on disk. 
  *)
 module type Fixed_size_sig = sig 
 
@@ -90,31 +90,6 @@ module type Val_sig = sig
 
 end (* Val *) 
 
-module Typed_bytes(FS:Fixed_size_sig) : sig 
-
-  type t 
-
-  val make : offset:int -> bytes:bytes -> unit -> t 
-
-  val get : t -> int -> FS.t 
-  val unsafe_get : t -> int -> FS.t 
-  
-  val set : t -> int -> FS.t -> unit  
-  val unsafe_set : t -> int -> FS.t -> unit 
-
-  val get_n : t -> int -> FS.t array 
-  val unsafe_get_n : t -> int -> FS.t array 
-
-  val set_n : t -> FS.t array -> unit 
-  val unsafe_set_n : t -> FS.t array -> unit 
-
-  val insert : t -> int -> int -> FS.t -> unit 
-  val unsafe_insert : t -> int -> int -> FS.t -> unit 
-
-  val blit : t -> int -> t -> int -> int -> unit 
-
-end 
-
 (** File block *)
 type block = {
   offset: int; 
@@ -177,12 +152,4 @@ module Make (Key:Key_sig) (Val:Val_sig) : sig
     unit ->
     write_op 
   
-  val write_intermediate_node : 
-    keys:Key.t array ->
-    vals:Val.t array ->
-    subs:int array ->
-    offset:int -> 
-    m:int -> 
-    unit ->
-    write_op 
 end

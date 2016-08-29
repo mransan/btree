@@ -21,6 +21,7 @@ build:
 	$(OCB) btree_test.native
 	$(OCB) btree_perf.native
 	$(OCB) btree_unix_test.native
+	$(OCB) btree_bytes.native
 
 clean:
 	$(OCB) -clean

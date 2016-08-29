@@ -39,74 +39,37 @@ end
 (** Module signature for types which can be encoded in a fixed size array
     of bytes. 
 
-    This module is crucial as the B-Tree implementation that all the pieces
-    of data can be encoded in a fixed size so that the location on disk of 
-    element of the tree can be computed efficiently.
+    This module is crucial as this particular B-Tree implementation is based on 
+    the assumption that each piece of data (key, values in particular) has a 
+    fixed size on disk. 
  *)
 module type Fixed_size_sig = sig 
 
   type t 
-  (** type *)
-
   val length : int 
-  (** length in bytes of the encoding key [t] *)
-
   val to_bytes : t -> bytes -> int -> unit  
-  (** [to_bytes key bytes pos] encodes the [key] in [bytes] starting 
-      at [pos].
-
-      Invariants:
-
-      {ul 
-      {- [bytes] can be of at least length: [pos + length]} 
-      {- [to_bytes] should only modify [bytes] in the interval [pos; pos+length[ }
-      } *)
-
   val of_bytes : bytes -> int -> t 
-  (** [of_bytes] decodes a key value of type [t] from [bytes] starting at [pos].
-      
-      Invariants:
-
-      {ul 
-      {- [bytes] can be of at least length: [pos + length]} 
-      {- [to_bytes] should only read [bytes] in the interval [pos; pos+length[ }
-      } *)
-
   val to_string : t -> string 
-  (** debug *)
 
-end (* Fixed_size_sig *)
+end 
 
-(** Module signature for totally ordering values of a given type. 
- *)
 module type Comparable_sig = sig 
 
   type t 
-  (** type *)
-
   val compare : t -> t -> int
-  (** comparaison function *)
 
-end (* Comparable_sig *)  
+end 
 
-
-(** Module signature for the key type of the B-Tree *)
 module type Key_sig = sig
-
   type t 
-
   include Fixed_size_sig with type t := t 
   include Comparable_sig with type t := t 
+end 
 
-end (* Key *) 
-
-(** Module signature for the value type of the B-Tree *)
 module type Val_sig = sig 
   type t 
-
   include Fixed_size_sig with type t := t 
-
-end (* Val *) 
+end 
 
 (** File block *)
 type block = {
@@ -128,11 +91,14 @@ let make_write_op ~offset ~bytes () = {offset; bytes}
 
 type read_op = block 
 
-module Typed_bytes(FS:Fixed_size_sig) =  struct 
+(** This module provide similar interface as [Array] module for a 
+    [bytes] array containing serialized [Fixed_size_sig] values. 
+  *)
+module FS_array(FS:Fixed_size_sig) =  struct 
 
   type t = {
-    offset: int; 
-    bytes: bytes; 
+    offset: int;  (* where in [byte] does the array starts *) 
+    bytes: bytes; (* contains [Fixed_size_sig] values starting at [offset] *) 
   } 
 
   let make ~offset ~bytes () = {offset; bytes}
@@ -143,7 +109,7 @@ module Typed_bytes(FS:Fixed_size_sig) =  struct
   let get ({offset; bytes} as t) i = 
     if Bytes.length bytes < offset + (i + 1) * FS.length ||
        i < 0 
-    then invalid_arg "Typed_bytes.get"
+    then invalid_arg "FS_array.get"
     else unsafe_get t i  
 
   let unsafe_set {offset; bytes} i v = 
@@ -152,7 +118,7 @@ module Typed_bytes(FS:Fixed_size_sig) =  struct
   let set ({offset; bytes} as t) i v = 
     if Bytes.length bytes < offset + (i + 1) * FS.length || 
        i < 0 
-    then invalid_arg "Typed_bytes.set"
+    then invalid_arg "FS_array.set"
     else unsafe_set t i v  
  
   let unsafe_get_n ({offset; bytes} as t) n = 
@@ -171,7 +137,7 @@ module Typed_bytes(FS:Fixed_size_sig) =  struct
   let get_n ({offset; bytes} as t) n = 
     if Bytes.length bytes < offset + (n) * FS.length ||
        n < 0 
-    then invalid_arg "Typed_bytes.get_n"
+    then invalid_arg "FS_array.get_n"
     else unsafe_get_n t n 
 
   let unsafe_set_n t a = 
@@ -179,7 +145,7 @@ module Typed_bytes(FS:Fixed_size_sig) =  struct
 
   let set_n ({offset; bytes} as t) a =  
     if Bytes.length bytes < offset + (Array.length a) * FS.length 
-    then invalid_arg "Typed_bytes.set_n"
+    then invalid_arg "FS_array.set_n"
     else unsafe_set_n t a 
 
   let blit t1 o1 t2 o2 len = 
@@ -191,16 +157,16 @@ module Typed_bytes(FS:Fixed_size_sig) =  struct
     Bytes.blit bytes1 bo1 bytes2 bo2 (len * FS.length)
 
   (* n is the number of element prior to the insert *)
-  let unsafe_insert ({offset; bytes} as t) pos n v = 
+  let unsafe_insert_shift_right ({offset; bytes} as t) pos n v = 
     blit t pos t (pos + 1) (n - pos); 
     FS.to_bytes v bytes (offset + pos * FS.length)
 
-  let insert ({offset; bytes} as t) pos n v = 
+  let insert_shift_right ({offset; bytes} as t) pos n v = 
     if pos  < 0  ||
        pos  > n  ||   (* we allow append at the end *)
        (Bytes.length bytes < offset + (n + 1) * FS.length)
-    then invalid_arg (Printf.sprintf "Typed_bytes.insert (pos: %i, n: %i)" pos n)
-    else unsafe_insert t pos n v 
+    then invalid_arg (Printf.sprintf "FS_array.insert (pos: %i, n: %i)" pos n)
+    else unsafe_insert_shift_right t pos n v 
 
   let insert_pop_left t pos v = 
     let ret = get t 0 in 
@@ -221,9 +187,9 @@ end
 
 module Make (Key:Key_sig) (Val:Val_sig) = struct  
 
-  module Keys = Typed_bytes(Key) 
-  module Vals = Typed_bytes(Val)
-  module Ints = Typed_bytes(Int)
+  module Keys = FS_array(Key) 
+  module Vals = FS_array(Val)
+  module Ints = FS_array(Int)
 
   type node_on_disk = {
     offset: int; 
@@ -367,7 +333,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     let rec aux keys key lower upper = 
       match upper - lower with
       | 0 | 1 -> `Insert_at upper
-         (* The [upper] value is chosen because the [Typed_bytes.insert] 
+         (* The [upper] value is chosen because the [FS_array.insert] 
           * function will insert values by shifting the the value to the right *) 
       | _ -> 
         let median = (lower + upper) / 2  in 
@@ -503,9 +469,9 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     end
     else begin  
       (* no split needed *)
-      Keys.insert keys pos (nb_of_vals k) key;
-      Vals.insert vals pos (nb_of_vals k) value;
-      Ints.insert subs (pos + 1) (nb_of_subs k) right_sub; 
+      Keys.insert_shift_right keys pos (nb_of_vals k) key;
+      Vals.insert_shift_right vals pos (nb_of_vals k) value;
+      Ints.insert_shift_right subs (pos + 1) (nb_of_subs k) right_sub; 
       Int.to_bytes (incr_k k) bytes 0; 
       Insert_res_done (None, node_write_op node :: write_ops)
     end

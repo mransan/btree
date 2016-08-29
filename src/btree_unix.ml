@@ -1,5 +1,3 @@
-
-
 module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct 
 
   module Internal = Btree.Make(Key)(Val)
@@ -64,9 +62,9 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
         | Some root_offset -> {t with root_offset} 
       end 
       | Internal.Insert_res_read_data (block, k) ->  
-        k (do_read_op fd block) |> aux 
+        do_read_op fd block |> k |> aux 
       | Internal.Insert_res_allocate (length, k) -> 
-        k (do_allocate fd length) |> aux 
+        do_allocate fd length |> k |> aux 
       | _ -> assert(false)
     in 
     Internal.insert (node_on_disk t) key value |> aux 
@@ -74,7 +72,7 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
   let debug ({fd; _} as t)= 
     let rec aux = function
       | Internal.Debug_res_read_data (block, k) -> 
-        k (do_read_op fd block) |> aux 
+        do_read_op fd block |> k |> aux 
       | Internal.Debug_res_done  -> () 
     in 
     Internal.debug (node_on_disk t) |> aux 
