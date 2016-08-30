@@ -15,4 +15,12 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) : sig
 
   val debug : t -> unit 
 
+  module Stats : sig 
+    val reset : t -> unit 
+    val read_count : t -> int 
+    val write_count : t -> int 
+    val node_length : t -> int 
+    val storage_length : t -> int
+  end 
+
 end

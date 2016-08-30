@@ -46,17 +46,19 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
     storage : bytes;
     root_offset: int;
     m : int;
+    write_op_counter : int ref;
+    read_op_counter : int ref;
   }
 
-  let do_read_op storage ({Btree.offset;length} as block) = 
-    (* incr read_op_counter; *) 
+  let do_read_op read_op_counter storage ({Btree.offset;length} as block) = 
+    incr read_op_counter;
     printf "- reading block: %s" (Btree.string_of_block block);
     let sub = Bytes.sub storage offset length in
     printf "%s\n" (string_of_bytes sub); 
     sub 
 
-  let do_write_op storage {Btree.offset; bytes; } = 
-    (* incr write_op_counter; *)
+  let do_write_op write_op_counter storage {Btree.offset; bytes; } = 
+    incr write_op_counter;
     printf "- writing to offset %i%s\n" 
       offset 
       (string_of_bytes bytes); 
@@ -68,11 +70,11 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
 
   let int_compare (x:int) (y:int) = Pervasives.compare x y 
 
-  let do_write_ops storage  write_ops = 
+  let do_write_ops write_op_counter storage  write_ops = 
     List.sort (fun {Btree.offset = lhs; _} {Btree.offset = rhs; _} -> 
       int_compare lhs rhs
     ) write_ops
-    |>  List.iter (fun write -> do_write_op storage write) 
+    |>  List.iter (fun write -> do_write_op write_op_counter storage write) 
 
   let do_allocate storage length = 
     printf "- allocating block of length: %i @ offset: %i\n" 
@@ -85,23 +87,25 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
     let write_op = Internal.write_leaf_node 
       ~keys:[||] ~vals:[||] ~offset:0 ~m () in 
     let storage = Bytes.create (Internal.node_length_of_m m) in 
-    do_write_op storage write_op; 
-    { storage; root_offset = 0; m}
+    let write_op_counter = ref 0 in
+    do_write_op write_op_counter storage write_op; 
+    { storage; root_offset = 0; m; write_op_counter; read_op_counter = ref 0}
 
   let node_on_disk {root_offset; m; _} = 
     Internal.make_on_disk ~offset:root_offset ~m () 
 
   let insert t key value = 
+    let {read_op_counter; write_op_counter; _ }  = t in 
 
     let rec aux ({storage; _ } as t) = function 
       | Internal.Insert_res_done (root_offset, write_ops) -> begin  
-        do_write_ops storage write_ops;
+        do_write_ops write_op_counter storage write_ops;
         match root_offset with
         | None -> t 
         | Some root_offset -> {t with root_offset} 
       end 
       | Internal.Insert_res_read_data (block, k) ->  
-        do_read_op storage block |> k |> aux t 
+        do_read_op read_op_counter storage block |> k |> aux t 
       | Internal.Insert_res_allocate (length, k) -> 
         let storage, offset = do_allocate storage length  in 
         k offset |> aux {t with storage}  
@@ -109,21 +113,40 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
     in 
     Internal.insert (node_on_disk t) key value |> aux t 
 
-  let debug ({storage ; _} as t)= 
+  let debug ({storage ; read_op_counter; _} as t)= 
     let rec aux = function
       | Internal.Debug_res_read_data (block, k) -> 
-        do_read_op storage block |> k |> aux 
+        do_read_op read_op_counter storage block |> k |> aux 
       | Internal.Debug_res_done  -> () 
     in 
     Internal.debug (node_on_disk t) |> aux 
 
-  let find ({storage; _} as t) key = 
+  let find ({storage; read_op_counter; _} as t) key = 
     let rec aux = function
       | Internal.Find_res_not_found -> None 
       | Internal.Find_res_read_data (block, k) -> 
-        do_read_op storage block |> k |>  aux 
+        do_read_op read_op_counter storage block |> k |>  aux 
       | Internal.Find_res_val v -> Some v 
     in
     Internal.find (node_on_disk t) key |> aux 
 
+  module Stats = struct 
+
+    let reset {read_op_counter; write_op_counter; _ } = 
+      read_op_counter := 0; 
+      write_op_counter := 0
+
+    let read_count {read_op_counter; _ } = 
+      !read_op_counter 
+
+    let write_count {write_op_counter; _} = 
+      !write_op_counter
+
+    let node_length {m; _} = 
+      Internal.node_length_of_m m 
+
+    let storage_length {storage; _ } = 
+      Bytes.length storage 
+
+  end
 end (* Make *) 

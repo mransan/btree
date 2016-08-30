@@ -3,11 +3,12 @@ let make_test_key_val4 s =
   assert(String.length s = 4);
   (Printf.sprintf "0000%s" s, Printf.sprintf "%s0000" s) 
 
-let of_bytes_counter = ref 0 
-let compare_counter = ref 0 
 
 module String8 = struct 
   type t = string 
+
+  let of_bytes_counter = ref 0 
+  let compare_counter = ref 0 
 
   let length = 8 
 
@@ -27,114 +28,41 @@ module String8 = struct
 
 end 
 
-module S8BT = Btree.Make(String8)(String8) 
+module S8BT = Btree_bytes.Make(String8)(String8) 
 
 
-let write_op_counter = ref 0 
-let do_write_op storage ({Btree.offset; bytes; } : Btree.write_op) = 
-  incr write_op_counter;
-  let length_to_write = Bytes.length bytes in 
-  Bytes.blit 
-    (* src *) bytes 0 
-    (* dst *) storage offset 
-    (* len *) length_to_write
-
-let do_write_ops storage write_ops = 
-  List.iter (fun write_op -> 
-    do_write_op storage write_op
-  ) write_ops
-
-
-let read_op_counter = ref 0 
-let do_read_op storage {Btree.offset;length} =
-  incr read_op_counter;
-  let sub = Bytes.sub storage offset length in
-  sub 
-
-let do_allocate storage length = 
-  let offset = Bytes.length storage in 
-  let storage = Bytes.extend storage 0 length in 
-  (storage, offset) 
-
-let find ~storage ~offset ~m ~key () = 
-  
-  let n = S8BT.make_on_disk ~offset ~m () in 
-
-  let rec aux = function
-    | S8BT.Find_res_val x -> Some x 
-    | S8BT.Find_res_not_found -> None 
-    | S8BT.Find_res_read_data (block, k) -> 
-      do_read_op storage block |> k |> aux 
-  in 
-  aux (S8BT.find n key)
-
-type insert_res = 
-  | Insert_res_done of (int option * bytes) 
-  | Insert_res_node_split of bytes * string * string * int * (Btree.write_op list)  
-
-let insert ~storage ~offset ~m ~key ~value () = 
-  let n = S8BT.make_on_disk ~offset ~m () in
-  let rec aux storage = function
-    | S8BT.Insert_res_done (new_root, write_ops) -> 
-      List.iter (fun write_op -> 
-        do_write_op storage write_op 
-      ) write_ops; 
-      Insert_res_done (new_root, storage)
-    | S8BT.Insert_res_read_data (block, k) ->
-      do_read_op storage block |> k |> aux storage  
-    | S8BT.Insert_res_node_split (k, v, n_offset, write_ops)  -> 
-      Insert_res_node_split (storage, k, v, n_offset, write_ops)  
-
-    | S8BT.Insert_res_allocate (length, k) -> 
-      let storage, offset = do_allocate storage length in 
-      k offset |> aux storage  
-  in
-  aux storage (S8BT.insert n key value)
 let run_random_inserts ~m ~nb_of_inserts () = 
 
-  let t0 = Unix.gettimeofday () in 
 
-  of_bytes_counter := 0; 
-  compare_counter := 0;
-  write_op_counter := 0;
-  read_op_counter := 0;
-  let root_offset = ref 0 in 
+  String8.of_bytes_counter := 0; 
+  String8.compare_counter := 0;
   
   let make_test_key_val i = 
     let s = Printf.sprintf "%04i" i in 
     make_test_key_val4 s 
   in 
 
-  let write = 
-    S8BT.write_leaf_node 
-      ~keys:[||] ~vals:[||] ~offset:!root_offset ~m ()
-  in 
-
-  let storage = ref @@ Bytes.create (S8BT.node_length_of_m m) in 
-  do_write_op !storage write;
+  let t = S8BT.make ~m () in 
+  S8BT.Stats.reset t ; 
 
   let inserts = Array.make nb_of_inserts 0 in  
   
-  for i = 0 to nb_of_inserts - 1 do 
-    let nb = Random.int 9999 in 
-    Array.set inserts i nb;
-    let key, value = make_test_key_val nb in 
-    (*
-    Printf.printf "inserting key: %s \n%!" key;
-    *)
-    begin match insert ~storage:!storage  ~offset:!root_offset ~m ~key ~value () with
-    | Insert_res_done (new_root, storage') -> 
-      storage := storage'; 
-      begin match new_root with
-      | None -> () 
-      | Some new_root -> root_offset := new_root
-      end
-    | _ -> assert(false)
-    end;
-  done; 
+  let rec aux t = function
+    | i when i = nb_of_inserts -> t 
+    | i  -> 
+      let nb = Random.int 9999 in 
+      Array.set inserts i nb;
+      let key, value = make_test_key_val nb in 
+      let t  = S8BT.insert t key value in 
+      aux t (i + 1)
+  in 
+
+  let t0 = Unix.gettimeofday () in 
+  let t = aux t 0 in
+  let t1 = Unix.gettimeofday () in 
 
   let find s expected = 
-    match find ~storage:!storage ~offset:!root_offset ~m ~key:s () with
+    match S8BT.find t s with 
     | None -> begin 
       Printf.eprintf "- error key (%s) is not found \n" s; 
       assert(false)
@@ -149,8 +77,6 @@ let run_random_inserts ~m ~nb_of_inserts () =
       end 
   in
   
-  let t1 = Unix.gettimeofday () in 
-  
   Array.iter (fun nb -> 
     let key, value = make_test_key_val nb in 
     find key value
@@ -163,9 +89,10 @@ let run_random_inserts ~m ~nb_of_inserts () =
     "write_op: %06i, read_op: %06i, " ^^ 
     "time insert: %08.4f, time find: %08.4f\n"
     )  
-    m (S8BT.node_length_of_m m) (Bytes.length !storage) !of_bytes_counter !compare_counter 
-    !write_op_counter !read_op_counter 
-    (t1 -. t0) (t2 -. t1) 
+    m (S8BT.Stats.node_length t) (S8BT.Stats.storage_length t)
+    !String8.of_bytes_counter !String8.compare_counter 
+    (S8BT.Stats.write_count t) (S8BT.Stats.read_count t) 
+    (t1 -. t0) (t2 -. t1);; 
 
 
 let () = 
