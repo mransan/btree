@@ -36,13 +36,6 @@ module Int = struct
       bytes (pos + 3) (char_of_int Int32.(to_int (logand 0xffl (shift_right i 24))))
 end 
 
-(** Module signature for types which can be encoded in a fixed size array
-    of bytes. 
-
-    This module is crucial as this particular B-Tree implementation is based on 
-    the assumption that each piece of data (key, values in particular) has a 
-    fixed size on disk. 
- *)
 module type Fixed_size_sig = sig 
 
   type t 
@@ -71,10 +64,12 @@ module type Val_sig = sig
   include Fixed_size_sig with type t := t 
 end 
 
+type block_length = int 
+
 (** File block *)
 type block = {
   offset: int; 
-  length: int;
+  length: block_length;
 }
 
 let make_block ~offset ~length () = {offset; length; } 
@@ -140,14 +135,6 @@ module FS_array(FS:Fixed_size_sig) =  struct
     then invalid_arg "FS_array.get_n"
     else unsafe_get_n t n 
 
-  let unsafe_set_n t a = 
-    Array.iteri (fun i e -> unsafe_set t i e ) a  
-
-  let set_n ({offset; bytes} as t) a =  
-    if Bytes.length bytes < offset + (Array.length a) * FS.length 
-    then invalid_arg "FS_array.set_n"
-    else unsafe_set_n t a 
-
   let blit t1 o1 t2 o2 len = 
     (* TODO add checks *)
     let {offset = offset1; bytes = bytes1 } = t1 in 
@@ -196,6 +183,8 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     m : int; 
   }
 
+  type node = node_on_disk
+
   type node_as_byte = {
     on_disk : node_on_disk;
     k : int;
@@ -206,6 +195,8 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
   }
 
   let make_on_disk ~offset ~m () = {offset; m}
+
+  let make_node = make_on_disk
 
   let is_leaf k = 
     (* we use the sign of k to determine whether the node is a
@@ -247,63 +238,32 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
   let node_block {offset; m;} =
     make_block ~offset ~length:(node_length_of_m m) 
 
-  let make_as_bytes ~on_disk:({m;_ } as on_disk) ~bytes () = {
-    on_disk; 
-    k = Int.of_bytes bytes 0; 
-    keys = Keys.make ~offset:(keys_offset m) ~bytes (); 
-    vals = Vals.make ~offset:(vals_offset m) ~bytes (); 
-    subs = Ints.make ~offset:(subs_offset m) ~bytes ();
-    bytes;
-  }
+  let keys_vals_subs ~m ~bytes () =
+    let keys = Keys.make ~offset:(keys_offset m) ~bytes () in 
+    let vals = Vals.make ~offset:(vals_offset m) ~bytes () in 
+    let subs = Ints.make ~offset:(subs_offset m) ~bytes () in
+    (keys, vals, subs) 
+
+  let make_as_bytes ~on_disk:({m;_ } as on_disk) ~bytes () = 
+    let keys, vals, subs = keys_vals_subs ~m ~bytes () in 
+    { on_disk; k = Int.of_bytes bytes 0; keys; vals; subs; bytes; }
 
   let node_write_op {bytes; on_disk = {offset; _}; _ } = 
     make_write_op ~offset ~bytes ()
-
-  let write_leaf_node 
-          ~keys ~vals ~offset ~m () = 
-
-    if Array.length keys <> Array.length vals 
-    then invalid_arg "Btree.Make.write_leaf_node"
-    else 
-      let nb_of_vals = Array.length keys in 
-      let bytes = Bytes.create (node_length_of_m m) in 
-      let k = - nb_of_vals in 
-
-      let keys_bytes = Keys.make ~offset:(keys_offset m) ~bytes () in 
-      let vals_bytes = Vals.make ~offset:(vals_offset m) ~bytes () in 
-
-      Int.to_bytes k bytes 0; 
-      Keys.set_n keys_bytes keys; 
-      Vals.set_n vals_bytes vals;
-
-      make_write_op ~offset ~bytes ()  
-
-  let write_intermediate_node 
-          ~keys ~vals ~subs ~offset ~m () = 
-
-    if Array.length keys <> Array.length vals || 
-       Array.length keys <> Array.length subs - 1  
-    then invalid_arg "Btree.Make.write_intermediate_node"
-    else 
-      let nb_of_vals = Array.length keys in
-      let bytes = Bytes.create (node_length_of_m m) in 
-      let k = nb_of_vals in 
-      
-      let keys_bytes = Keys.make ~offset:(keys_offset m) ~bytes () in 
-      let vals_bytes = Vals.make ~offset:(vals_offset m) ~bytes () in 
-      let subs_bytes = Ints.make ~offset:(subs_offset m) ~bytes () in 
-      
-      Int.to_bytes k bytes 0; 
-      Keys.set_n keys_bytes keys; 
-      Vals.set_n vals_bytes vals;
-      Ints.set_n subs_bytes subs;
-
-      make_write_op ~offset ~bytes ()  
+  
+  let initialize ({offset; m} : node_on_disk) = 
+    let length = node_length_of_m m in 
+    let bytes = Bytes.create length in 
+    let k = 0 in 
+    Int.to_bytes k bytes 0; 
+    (* no keys, vals, subs values -> we leave bytes with uninitialized 
+     * values *)
+    (length, make_write_op ~offset ~bytes ()) 
 
   type insert_res = 
     | Insert_res_done of (int option * write_op list)  
     | Insert_res_read_data of block * insert_res_read_data_continuation  
-    | Insert_res_allocate of int * insert_res_allocate_continuation 
+    | Insert_res_allocate of block_length * insert_res_allocate_continuation 
     | Insert_res_node_split of (Key.t * Val.t * int * write_op list) 
   
   and insert_res_read_data_continuation = bytes -> insert_res  
@@ -369,17 +329,21 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
          | c when c > 0 -> `Insert_at (upper+1) 
          | _ -> aux keys key lower (upper + 1) 
   
-  let insert_make_root left_node right_node_offset key value write_ops = 
+  let make_new_root_node left_node right_node_offset key value write_ops = 
     let { on_disk = {offset; m; }; _} =  left_node in 
-    Insert_res_allocate (node_length_of_m m, fun new_root_offset -> 
-      let new_root_write_op = write_intermediate_node 
-        ~keys:[| key |] 
-        ~vals:[| value |] 
-        ~subs:[| offset; right_node_offset |] 
-        ~offset:new_root_offset 
-        ~m
-        ()  
-      in
+    let length = node_length_of_m m in  
+    Insert_res_allocate (length, fun new_root_offset -> 
+      let bytes = Bytes.create length in 
+      let k = 1 in 
+      let keys, vals, subs = keys_vals_subs ~m ~bytes () in 
+      
+      Int.to_bytes k bytes 0; 
+      Keys.set keys 0 key; 
+      Vals.set vals 0 value;
+      Ints.set subs 0 offset;
+      Ints.set subs 1 right_node_offset;
+
+      let new_root_write_op = make_write_op ~offset:new_root_offset ~bytes () in 
       let write_ops = new_root_write_op :: write_ops in 
       Insert_res_done (Some new_root_offset, write_ops)
     )
@@ -414,16 +378,13 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
         Int.to_bytes k bytes 0;
 
-        let right_node =
-          let bytes = Bytes.create (node_length_of_m m) in 
-          Int.to_bytes k bytes 0; 
-          let on_disk = make_on_disk ~offset:right_node_offset ~m () in 
-          make_as_bytes ~on_disk ~bytes ()
-        in 
-
-        let {
-          keys = right_keys; vals = right_vals; subs = right_subs;_; 
-        } = right_node in
+        let right_node_bytes = Bytes.create (node_length_of_m m) in 
+        Int.to_bytes k right_node_bytes 0; 
+        let (
+          right_keys, 
+          right_vals, 
+          right_subs
+        ) = keys_vals_subs ~m ~bytes:right_node_bytes () in 
 
         let right_median_i = nb_of_vals k in 
         let nb_of_vals' = nb_of_vals k in 
@@ -455,12 +416,13 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
         let write_ops = 
           node_write_op node ::
-          node_write_op right_node :: write_ops 
+          make_write_op ~offset:right_node_offset ~bytes:right_node_bytes () :: 
+          write_ops 
         in 
 
         if is_root
         then 
-          insert_make_root 
+          make_new_root_node 
             node right_node_offset median_key median_value write_ops 
         else 
           Insert_res_node_split (
@@ -511,6 +473,9 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
         ) 
     end
 
+  let insert root_node key value = insert root_node key value 
+    (* To remove the optional argument *) 
+
   type find_res = 
     | Find_res_not_found 
     | Find_res_val of Val.t 
@@ -536,8 +501,8 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
         find sub_node key
   
   type debug_res = 
-    | Debug_res_read_data of block * debug_res_continuation 
     | Debug_res_done  
+    | Debug_res_read_data of block * debug_res_continuation 
 
   and debug_res_continuation = bytes -> debug_res  
 
@@ -585,4 +550,6 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
         aux 0 
       end
     )
+
+  let debug node = debug node 
 end 

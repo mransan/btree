@@ -43,14 +43,14 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
     offset
   
   let make ~filename ~m () = 
-    let write_op = Internal.write_leaf_node 
-      ~keys:[||] ~vals:[||] ~offset:0 ~m () in 
+    let node = Internal.make_node ~offset:0 ~m () in 
+    let _, write_op = Internal.initialize node in 
     let fd = Unix.openfile filename [Unix.O_RDWR; Unix.O_CREAT] 0o640 in 
     do_write_op fd write_op; 
     { fd; root_offset = 0; m}
 
   let node_on_disk {root_offset; m; _} = 
-    Internal.make_on_disk ~offset:root_offset ~m () 
+    Internal.make_node ~offset:root_offset ~m () 
 
   let insert ({fd;_} as t) key value = 
 

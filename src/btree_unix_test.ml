@@ -28,7 +28,7 @@ let () =
   let filename = "data" in 
   let btree = S8BT.make ~filename ~m:201 () in 
   
-  let nb_of_inserts = 1_000_000 in 
+  let nb_of_inserts = 200_000 in 
 
   let rec aux btree = function
     | 0 -> btree 

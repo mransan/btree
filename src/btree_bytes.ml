@@ -84,15 +84,16 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
     (storage, offset) 
   
   let make ~m () = 
-    let write_op = Internal.write_leaf_node 
-      ~keys:[||] ~vals:[||] ~offset:0 ~m () in 
-    let storage = Bytes.create (Internal.node_length_of_m m) in 
+
+    let node = Internal.make_node ~offset:0 ~m () in 
+    let length, write_op = Internal.initialize node in 
+    let storage = Bytes.create length in 
     let write_op_counter = ref 0 in
     do_write_op write_op_counter storage write_op; 
     { storage; root_offset = 0; m; write_op_counter; read_op_counter = ref 0}
 
   let node_on_disk {root_offset; m; _} = 
-    Internal.make_on_disk ~offset:root_offset ~m () 
+    Internal.make_node ~offset:root_offset ~m () 
 
   let insert t key value = 
     let {read_op_counter; write_op_counter; _ }  = t in 
