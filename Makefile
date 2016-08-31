@@ -7,11 +7,28 @@ OCB       = ocamlbuild $(OCB_FLAGS) $(OCB_INC)
 
 all: build test perf
 
-perf: build 
+perf.byte: build 
 	rm -f *.dump
-	rm -f data 
+	rm -f ./btree_*.ml
 	export OCAMLRUNPARAM="b" && ./btree_bytes_perf.native 3
-	export OCAMLRUNPARAM="b" && time ./btree_unix_perf.native
+	export OCAMLRUNPARAM="b" && ./btree_bytes_perf.native 7
+	export OCAMLRUNPARAM="b" && ./btree_bytes_perf.native 15
+	export OCAMLRUNPARAM="b" && ./btree_bytes_perf.native 31
+	export OCAMLRUNPARAM="b" && ./btree_bytes_perf.native 63
+	export OCAMLRUNPARAM="b" && ./btree_bytes_perf.native 127
+	export OCAMLRUNPARAM="b" && ./btree_bytes_perf.native 255
+	export OCAMLRUNPARAM="b" && ./btree_bytes_perf.native 511
+
+perf.unix: build 
+	rm -f *.data 
+	@export OCAMLRUNPARAM="b" && ./btree_unix_perf.native 3 
+	@export OCAMLRUNPARAM="b" && ./btree_unix_perf.native 7 
+	@export OCAMLRUNPARAM="b" && ./btree_unix_perf.native 15
+	@export OCAMLRUNPARAM="b" && ./btree_unix_perf.native 31
+	@export OCAMLRUNPARAM="b" && ./btree_unix_perf.native 63
+	@export OCAMLRUNPARAM="b" && ./btree_unix_perf.native 127
+	@export OCAMLRUNPARAM="b" && ./btree_unix_perf.native 255
+	@export OCAMLRUNPARAM="b" && ./btree_unix_perf.native 511
   
 test: build 
 	export OCAMLRUNPARAM="b" && ./btree_bytes_test.native
@@ -22,5 +39,5 @@ build:
 	$(OCB) btree_unix_perf.native
 
 clean:
-	rm -f data
+	rm -f *.data
 	$(OCB) -clean

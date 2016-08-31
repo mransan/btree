@@ -1,7 +1,7 @@
 
-let make_test_key_val4 s = 
-  assert(String.length s = 4);
-  (Printf.sprintf "0000%s" s, Printf.sprintf "%s0000" s) 
+let make_test_key_val7 s = 
+  assert(String.length s = 7);
+  (Printf.sprintf "0%s" s, Printf.sprintf "%s0" s) 
 
 
 module String8 = struct 
@@ -37,19 +37,21 @@ let run_random_inserts ~m ~nb_of_inserts () =
   String8.compare_counter := 0;
   
   let make_test_key_val i = 
-    let s = Printf.sprintf "%04i" i in 
-    make_test_key_val4 s 
+    let s = Printf.sprintf "%07i" i in 
+    make_test_key_val7 s 
   in 
 
   let t = S8BT.make ~m () in 
   S8BT.Stats.reset t ; 
 
   let inserts = Array.make nb_of_inserts 0 in  
+
+  let max_random = 10 * nb_of_inserts in 
   
   let rec aux t = function
     | i when i = nb_of_inserts -> t 
     | i  -> 
-      let nb = Random.int 9999 in 
+      let nb = Random.int max_random in 
       Array.set inserts i nb;
       let key, value = make_test_key_val nb in 
       let t  = S8BT.insert t key value in 
@@ -94,9 +96,38 @@ let run_random_inserts ~m ~nb_of_inserts () =
     (t1 -. t0) (t2 -. t1);; 
 
 
+let run_test ~m () = 
+  let cmd = Printf.sprintf "%s %s run" Sys.argv.(0) Sys.argv.(1) in 
+  Printf.printf "running: %s\n%!" cmd;
+  match Sys.command cmd with
+  | 0 -> 
+    let cmd = Printf.sprintf "mv ocamlprof.dump btree_%03i.dump" m in 
+    Printf.printf "running: %s\n%!" cmd;
+    begin match Sys.command cmd with
+    | 0 -> 
+      let cmd1 = Printf.sprintf 
+          "ocamlprof -f btree_%03i.dump src/btree.ml > btree_%03i.ml" m m in
+      let cmd2 = Printf.sprintf 
+          "ocamlprof -f btree_%03i.dump src/btree_bytes_perf.ml > btree_bytes_perf_%03i.ml" m m in
+      
+      let cmd = Printf.sprintf "%s && %s" cmd1 cmd2 in 
+      Printf.printf "running: %s\n%!" cmd;
+      exit (Sys.command cmd)
+    | n -> exit n 
+    end
+  | n -> exit n
+
 let () = 
-  if Array.length Sys.argv <> 2 
+  if Array.length Sys.argv < 2 
   then failwith "m argument missing"
   else 
     let m = int_of_string Sys.argv.(1) in 
-    run_random_inserts ~m ~nb_of_inserts:100000 () 
+    if Array.length Sys.argv = 3 
+    then
+      if Sys.argv.(2) = "run"
+      then 
+        run_random_inserts ~m ~nb_of_inserts:10000 () 
+      else 
+        failwith "Error, 2nd cmd line argument can only be 'run'"
+    else
+      run_test ~m () 
