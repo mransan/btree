@@ -182,7 +182,7 @@ let get_record_sync handle name =
 ```
 
 From those 2 examples we can see that 
-a) No code is injected between the caller and the library
-b) The library can be integrated in both synchronous and asynchronous way 
-c) Error handling of read error is completely separated from the library error handling letting 
+* No code is injected between the caller and the library
+* The library can be integrated in both synchronous and asynchronous way 
+* Error handling of read error is completely separated from the library error handling letting 
 the caller decide how to handle those 2. 
