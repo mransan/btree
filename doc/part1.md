@@ -2,15 +2,14 @@
 -----
 
 
-#### API Design Review 
---
+#### I) API Design Review
 
 Designing a library requires the creation of a protocol with the calling application. 
 The protocol complexity varies with the genericity of the API and how much configuration is implemented. 
 
 Let’s take the example of a library reading some kind of record on disk:
 
-1. **Stateless purely functional**
+**1. Stateless purely functional**
 
 ```Javascript
 let record = get_record_by_first_name("john")
@@ -18,7 +17,7 @@ let record = get_record_by_first_name("john")
 
 This type of API is the simplest and most likely what we should aim for unless requirements imposes more genericity. 
 
-2. **Stateful**
+**2. Stateful**
 
 ```Javascript
 let handle = create_handle () ; 
@@ -37,7 +36,7 @@ A typical use of this API is to increase performance, [create_handle] create a s
 Looking at the protocol we can see that it is self explanatory. The API enforces the caller to first create a handle and then call the [get_record_by_first_name]. 
 
 
-3. **State with protocol** 
+**3. State with protocol** 
 
 ```Javascript
 let handle = create_handle (); 
@@ -51,7 +50,7 @@ which is definitely not enforced by the API and if you are lucky it will be clea
 Note that language with type system you can actually enforce [start()] to be called before [get_record_by_first_name] by simply returning a type the handle with a new type alias. (Another blog post for that). 
 
 
-4. **Code injection - Simple case** 
+**4. Code injection - Simple case** 
 
 The most complex libraries require some form of code injection, usually to achieve more generic behavior and advance configuration. 
 
@@ -72,7 +71,7 @@ This is the simplest case of course. This type of design is used extensively in 
 
 Depending on how advance the type system of the language is, the API will be more or less self documented. 
 
-5. **Code injection - Complex case**
+**5. Code injection - Complex case**
 
 More complex code injection patterns can look like this (Javascript):
 
@@ -108,10 +107,10 @@ class handle {
 };
 ```
 
-#### Code injection issues 
+#### II) Code injection issues 
 --
 
-1. **Concurrency**
+**1. Concurrency**
 
 The previous [disk_operation_interface] assumes that both [read] and [write] are synchronous. However in modern asynchronous programming those 2 operations are not. Futures and promises are now the norm to deal with such operation. We could then change the interface to support promise but then the following question arise:
 * Which type of promise to use. It's quite often that you would find multiple implementation. (C++ 17 has them but other C++ framework implement their own, OCaml has Lwt and Async).
@@ -119,14 +118,14 @@ The previous [disk_operation_interface] assumes that both [read] and [write] are
 
 Furthermore you do get the feeling that you're not really solving the problem of the API but rather making it work.
 
-2. **Code injection and error handling**
+**2. Code injection and error handling**
 
 In the example below the library designer will have to clearly defined the behavior of his API with the [read] or [write] function fails by throwing an exception. 
 * Should the exception be catched with a 'catch-all' statement and transform to one of the exception defined by this library. 
 * Should any exception be ignored and pass through to the caller (which knows the type of exception his code could throw).  
 
 
-#### Continuation function**  
+#### III) Continuation function
 --
 
 Functional programming techniques could be used instead to create a scalable alternative to the code injection design above.
