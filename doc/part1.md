@@ -113,7 +113,7 @@ class handle {
 **1. Concurrency**
 
 The previous `disk_operation_interface` assumes that both `read` and `write` are synchronous. However in modern asynchronous programming those 2 operations are not. Futures and promises are now the norm to deal with such operation. We could then change the interface to support promise but then the following question arise:
-* Which type of promise to use. It's quite often that you would find multiple implementation. (C++ 17 has them but other C++ framework implement their own, OCaml has Lwt and Async).
+* Which type of promise to use. It's quite often that you would find multiple implementation. (C++ 11 has them but other C++ framework implement their own, OCaml has Lwt and Async).
 * Why should a synchronous client be affected by the possibility to use asynchronous type of disk operations. 
 
 Furthermore you do get the feeling that you're not really solving the problem of the API but rather making it work.
