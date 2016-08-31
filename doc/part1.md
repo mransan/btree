@@ -26,7 +26,7 @@ let record = handle.get_record_by_first_name("john");
 
 or in a more C or functional way but completely equivalent way:
 
-``` 
+```Javascript
 let handle = create_handle () in 
 let record = get_record_by_first_name(handle, "john"); 
 ```
