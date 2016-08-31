@@ -185,7 +185,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
   type node = node_on_disk
 
-  type node_as_byte = {
+  type node_in_memory = {
     on_disk : node_on_disk;
     k : int;
     keys: Keys.t; 
@@ -193,6 +193,22 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     subs: Ints.t;
     bytes: bytes;
   }
+
+  (* Note on node representation 
+   *
+   * A B-Tree node has 2 representation: on disk and in memory. 
+   *
+   * The on disk representation solely contains the location 
+   * on the storage. 
+   * The in memory representation contains the byte read from the storage. Those
+   * bytes are now in memory and read/manipulated to perform the various B-Tree 
+   * algorithm. 
+   *
+   * Only the 'on disk' representation is exposed in the interface for the
+   * client application to specify the on disk location of the root node of the
+   * B-Tree. 
+   *
+   *)
 
   let make_on_disk ~offset ~m () = {offset; m}
 
@@ -394,7 +410,10 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
         Vals.blit vals (right_median_i) right_vals 0 nb_of_vals';  
         Ints.blit subs (right_median_i) right_subs 0 nb_of_subs';
 
-        let median_key, median_value = match Pervasives.compare pos right_median_i with
+        let (
+          median_key, 
+          median_value
+        ) = match Pervasives.compare pos right_median_i with
           | 0 -> begin  
             Ints.set right_subs 0 right_sub; 
             (key, value) 
