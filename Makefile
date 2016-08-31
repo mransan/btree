@@ -5,24 +5,21 @@ OCB       = ocamlbuild $(OCB_FLAGS) $(OCB_INC)
 
 .PHONY: all build perf unix test 
 
-all: build unix test
+all: build test perf
 
 perf: build 
 	rm -f *.dump
-	export OCAMLRUNPARAM="b" && ./btree_perf.native 3
-  
-unix: build
 	rm -f data 
-	export OCAMLRUNPARAM="b" && time ./btree_unix_test.native
-
+	export OCAMLRUNPARAM="b" && ./btree_bytes_perf.native 3
+	export OCAMLRUNPARAM="b" && time ./btree_unix_perf.native
+  
 test: build 
-	export OCAMLRUNPARAM="b" && ./btree_test.native
+	export OCAMLRUNPARAM="b" && ./btree_bytes_test.native
 
 build:
-	$(OCB) btree_test.native
-	$(OCB) btree_perf.native
-	$(OCB) btree_unix_test.native
-	$(OCB) btree_bytes.native
+	$(OCB) btree_bytes_test.native
+	$(OCB) btree_bytes_perf.native
+	$(OCB) btree_unix_perf.native
 
 clean:
 	$(OCB) -clean

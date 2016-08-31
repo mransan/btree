@@ -206,9 +206,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
    *
    * Only the 'on disk' representation is exposed in the interface for the
    * client application to specify the on disk location of the root node of the
-   * B-Tree. 
-   *
-   *)
+   * B-Tree.  *)
 
   let make_on_disk ~offset ~m () = {offset; m}
 
@@ -575,4 +573,4 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     )
 
   let debug node = debug node 
-end 
+end (* Make *) 
