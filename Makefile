@@ -22,4 +22,5 @@ build:
 	$(OCB) btree_unix_perf.native
 
 clean:
+	rm -f data
 	$(OCB) -clean
