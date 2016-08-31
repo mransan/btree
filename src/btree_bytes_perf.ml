@@ -126,7 +126,7 @@ let () =
     then
       if Sys.argv.(2) = "run"
       then 
-        run_random_inserts ~m ~nb_of_inserts:10000 () 
+        run_random_inserts ~m ~nb_of_inserts:100000 () 
       else 
         failwith "Error, 2nd cmd line argument can only be 'run'"
     else

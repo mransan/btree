@@ -52,16 +52,20 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
 
   let do_read_op read_op_counter storage ({Btree.offset;length} as block) = 
     incr read_op_counter;
-    printf "- reading block: %s" (Btree.string_of_block block);
+    (*printf "- reading block: %s" (Btree.string_of_block block);
+     *)
     let sub = Bytes.sub storage offset length in
+    (*
     printf "%s\n" (string_of_bytes sub); 
+    *)
     sub 
 
   let do_write_op write_op_counter storage {Btree.offset; bytes; } = 
     incr write_op_counter;
-    printf "- writing to offset %i%s\n" 
+    (*printf "- writing to offset %i%s\n" 
       offset 
       (string_of_bytes bytes); 
+     *)
     let length_to_write = Bytes.length bytes in 
     Bytes.blit 
       (* src *) bytes 0 
@@ -77,8 +81,10 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
     |>  List.iter (fun write -> do_write_op write_op_counter storage write) 
 
   let do_allocate storage length = 
+    (*
     printf "- allocating block of length: %i @ offset: %i\n" 
       length (Bytes.length storage);
+    *)
     let offset = Bytes.length storage in 
     let storage = Bytes.extend storage 0 length in 
     (storage, offset) 
