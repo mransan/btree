@@ -44,10 +44,10 @@ handle.start();
 let record = handle.get_record_by_first_name("john");
 ```
 
-We've all seen that type of API and here the big difference is that [start()] must be called before [get_record_by_first_name()]. The API now introduces a protocol
+We've all seen that type of API and here the big difference is that `start()` must be called before `get_record_by_first_name()`. The API now introduces a protocol
 which is definitely not enforced by the API and if you are lucky it will be clearly documented. However we all figure it out pretty quickly, fix the code and most likely rant about the API to our friends. 
 
-Note that language with type system you can actually enforce [start()] to be called before [get_record_by_first_name] by simply returning a type the handle with a new type alias. (Another blog post for that). 
+Note that language with type system you can actually enforce `start()` to be called before `get_record_by_first_name` by simply returning a type the handle with a new type alias. (Another blog post for that). 
 
 
 **4. Code injection - Simple case** 
