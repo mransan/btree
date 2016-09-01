@@ -343,56 +343,6 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
          | c when c > 0 -> `Insert_at (upper+1) 
          | _ -> aux keys key lower (upper + 1) 
 
-
-  let binary_search keys key lower upper = 
-
-    let is_update = ref false in 
-    while (!upper - !lower > 1) do 
-      let median = (!lower + !upper) / 2  in 
-      match Key.compare key (Keys.get keys median) with
-      | 0 -> begin 
-        upper := median;
-        is_update := true;
-      end 
-      | c when c > 0 -> lower := median 
-      | _ -> upper := median
-    done;
-
-    if !is_update 
-    then `Update_at !upper 
-    else `Insert_at !upper 
-
-  let find_key_insert_position node key = 
-
-    let {keys; k; _ } = node in 
-    let nb_of_vals = nb_of_vals k in
-
-    (* Boundary condition check first *)
-
-    if nb_of_vals = 0 
-    then 
-      (* When the btree is empty then the root node will 
-       * have 0 key/values *)
-      `Insert_at 0 
-    else 
-      let lower = ref 0 in 
-      let upper = ref (nb_of_vals - 1) in 
-
-      (* Boundary check if the [key] is outside of the initial
-       * [lower] and [upper] bound. The [aux] function which implements
-       * the binary search relies on that *) 
-      match Key.compare key (Keys.get keys !lower) with
-      | 0 -> `Update_at !lower 
-      | c when c < 0 -> `Insert_at !lower 
-      | _ -> 
-         match Key.compare key (Keys.get keys !upper) with
-         | 0 -> `Update_at !upper 
-         | c when c > 0 -> `Insert_at (!upper+1) 
-         | _ -> begin 
-           incr upper; 
-           binary_search keys key lower upper 
-         end
-  
   let make_new_root_node left_node right_node_offset key value write_ops = 
     let { on_disk = {offset; m; }; _} =  left_node in 
     let length = node_length_of_m m in  

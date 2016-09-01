@@ -14,6 +14,7 @@ perf.byte: build
 	export OCAMLRUNPARAM="b" && ./btree_bytes_perf.native 7 run
 	export OCAMLRUNPARAM="b" && ./btree_bytes_perf.native 15 run
 	export OCAMLRUNPARAM="b" && ./btree_bytes_perf.native 31 run
+	export OCAMLRUNPARAM="b" && ./btree_bytes_perf.native 41 run
 	export OCAMLRUNPARAM="b" && ./btree_bytes_perf.native 63 run
 	export OCAMLRUNPARAM="b" && ./btree_bytes_perf.native 127 run
 	export OCAMLRUNPARAM="b" && ./btree_bytes_perf.native 255 run
@@ -21,13 +22,19 @@ perf.byte: build
 
 perf.unix: build 
 	rm -f *.data 
+	@export OCAMLRUNPARAM="b" && rm -f *.data && ./btree_unix_perf.native 15
+	@export OCAMLRUNPARAM="b" && rm -f *.data && ./btree_unix_perf.native 21
+	@export OCAMLRUNPARAM="b" && rm -f *.data && ./btree_unix_perf.native 25
+	@export OCAMLRUNPARAM="b" && rm -f *.data && ./btree_unix_perf.native 31
 	@export OCAMLRUNPARAM="b" && rm -f *.data && ./btree_unix_perf.native 35
-	@export OCAMLRUNPARAM="b" && rm -f *.data && ./btree_unix_perf.native 37
-	@export OCAMLRUNPARAM="b" && rm -f *.data && ./btree_unix_perf.native 39
 	@export OCAMLRUNPARAM="b" && rm -f *.data && ./btree_unix_perf.native 41
 	@export OCAMLRUNPARAM="b" && rm -f *.data && ./btree_unix_perf.native 45
 	@export OCAMLRUNPARAM="b" && rm -f *.data && ./btree_unix_perf.native 51
 	@export OCAMLRUNPARAM="b" && rm -f *.data && ./btree_unix_perf.native 55
+	@export OCAMLRUNPARAM="b" && rm -f *.data && ./btree_unix_perf.native 61
+	@export OCAMLRUNPARAM="b" && rm -f *.data && ./btree_unix_perf.native 65
+	@export OCAMLRUNPARAM="b" && rm -f *.data && ./btree_unix_perf.native 71
+	@export OCAMLRUNPARAM="b" && rm -f *.data && ./btree_unix_perf.native 75
   
 test: build 
 	export OCAMLRUNPARAM="b" && ./btree_bytes_test.native
