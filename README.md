@@ -1,12 +1,13 @@
 # btree
 A B-Tree implementation in OCaml
 
-## Overview 
---
+## Overview
 
 This library implement a B-Tree for fixed sized keys and fixed size
 values. In other word the size (in bytes) of both the key and the 
 value is known in advanced and is constant.
+
+The main OCaml module is [Btree](src/btree.mli).
 
 The B-Tree is assumed to be entirely stored in a single continuous storage. 
 That storage can be a file of course but not required. In fact the module 
@@ -21,11 +22,9 @@ file multiple B-Trees.
 The core module [Btree](src/btree.mli) does not make any assumption about how the following
 disk operation are implemented; they are delegated to the caller 
 through the returned type of each module function:
-{ul
-{- Reads} 
-{- Writes}
-{- Allocation of new storage}
-} 
+* Reads 
+* Writes
+* Allocation of new storage
 
 The module [Btree](src/btree.mli) should therefore never be used directly by application code 
 but it should rather be used as the core implementation of an opinionated
@@ -34,12 +33,10 @@ provides a building block to use B-Trees in your own storage solution.
 
 Additionally this package provides 2 example of B-Tree implementation which are using 
 the [Btree](src/btree.mli) module as their code logic:
-{ul
-{- [Btree_bytes](src/btree_bytes.mli): an in-memory byte array is used as storage. This is
-   used for unit testing without having to write to a file. }
-{- [Btree_unix](src/btree_unix.mli): uses the `Unix` module part of the OCaml distribution 
-   to perform all the file operations.}
-} 
+* [Btree_bytes](src/btree_bytes.mli): an in-memory byte array is used as storage. This is
+   used for unit testing without having to write to a file.
+* [Btree_unix](src/btree_unix.mli): uses the `Unix` module part of the OCaml distribution 
+   to perform all the file operations.
 
 ## Motivation
 
