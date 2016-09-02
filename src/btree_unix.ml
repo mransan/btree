@@ -31,7 +31,7 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
     List.sort (fun {Btree.offset = lhs; _} {Btree.offset = rhs; _} -> 
       int_compare lhs rhs
     ) write_ops
-    |>  List.iter (fun write -> do_write_op fd write) 
+    |>  List.iter (fun write -> do_write_op fd write)
 
   let do_allocate fd length = 
     let offset = Unix.lseek fd 0 Unix.SEEK_END in 
@@ -51,23 +51,25 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
 
   let node_on_disk {root_offset; m; _} = 
     Internal.make ~root_file_offset:root_offset ~m () 
+    
+  let rec insert_aux ({fd;_} as t) = function 
+    | Internal.Insert_res_done (root_offset, write_ops) -> begin  
+      do_write_ops fd write_ops;
+      match root_offset with
+      | None -> t 
+      | Some root_offset -> {t with root_offset} 
+    end 
+    | Internal.Insert_res_read_data (block, k) ->  
+      do_read_op fd block |> k |> insert_aux t
+    | Internal.Insert_res_allocate (length, k) -> 
+      do_allocate fd length |> k |> insert_aux t
+    | _ -> assert(false)
 
-  let insert ({fd;_} as t) key value = 
-
-    let rec aux = function 
-      | Internal.Insert_res_done (root_offset, write_ops) -> begin  
-        do_write_ops fd write_ops;
-        match root_offset with
-        | None -> t 
-        | Some root_offset -> {t with root_offset} 
-      end 
-      | Internal.Insert_res_read_data (block, k) ->  
-        do_read_op fd block |> k |> aux 
-      | Internal.Insert_res_allocate (length, k) -> 
-        do_allocate fd length |> k |> aux 
-      | _ -> assert(false)
-    in 
-    Internal.insert (node_on_disk t) key value |> aux 
+  let insert t key value = 
+    Internal.insert (node_on_disk t) key value |> insert_aux t 
+  
+  let append t key value = 
+    Internal.append (node_on_disk t) key value |> insert_aux t 
 
   let debug ({fd; _} as t)= 
     let rec aux = function

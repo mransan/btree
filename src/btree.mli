@@ -202,6 +202,20 @@ module Make (Key:Key_sig) (Val:Val_sig) : sig
       B-Tree. If [key] is found in the tree, then [value] replaces the previous
       value. *)
 
+  val append : t -> Key.t -> Val.t -> insert_res
+  (** [append root_node key value] appends the [key]/[value] pair in the 
+      B-Tree assuming that the key is: 
+      {ul
+      {- Not in the Btree [t]}
+      {- Greater than any of the previously appended/inserted keys}
+      } 
+
+      The caller is responsible to respect the invariant above.
+      
+      This method allows faster inserts when the keys are sequentially
+      inserted.
+     *)
+
   (** {2 Search} *)
   
   type find_res = 

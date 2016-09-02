@@ -103,24 +103,25 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
   let node_on_disk {root_offset; m; _} = 
     Internal.make ~root_file_offset:root_offset ~m () 
 
-  let insert t key value = 
-    let {read_op_counter; write_op_counter; _ }  = t in 
+  let rec insert_aux ({storage; write_op_counter; read_op_counter;_ } as t) = function 
+    | Internal.Insert_res_done (root_offset, write_ops) -> begin  
+      do_write_ops write_op_counter storage write_ops;
+      match root_offset with
+      | None -> t 
+      | Some root_offset -> {t with root_offset} 
+    end 
+    | Internal.Insert_res_read_data (block, k) ->  
+      do_read_op read_op_counter storage block |> k |> insert_aux t 
+    | Internal.Insert_res_allocate (length, k) -> 
+      let storage, offset = do_allocate storage length  in 
+      k offset |> insert_aux {t with storage}  
+    | _ -> assert(false)
 
-    let rec aux ({storage; _ } as t) = function 
-      | Internal.Insert_res_done (root_offset, write_ops) -> begin  
-        do_write_ops write_op_counter storage write_ops;
-        match root_offset with
-        | None -> t 
-        | Some root_offset -> {t with root_offset} 
-      end 
-      | Internal.Insert_res_read_data (block, k) ->  
-        do_read_op read_op_counter storage block |> k |> aux t 
-      | Internal.Insert_res_allocate (length, k) -> 
-        let storage, offset = do_allocate storage length  in 
-        k offset |> aux {t with storage}  
-      | _ -> assert(false)
-    in 
-    Internal.insert (node_on_disk t) key value |> aux t 
+  let insert t key value = 
+    Internal.insert (node_on_disk t) key value |> insert_aux t 
+  
+  let append t key value = 
+    Internal.append (node_on_disk t) key value |> insert_aux t 
 
   let debug ({storage ; read_op_counter; _} as t)= 
     let rec aux = function

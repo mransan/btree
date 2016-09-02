@@ -41,12 +41,24 @@ let run ~m () =
   let t0 =  Unix.gettimeofday () in 
   let btree = aux btree nb_of_inserts in
   let t1 = Unix.gettimeofday () in 
-  let write_rate = (float_of_int nb_of_inserts ) /. (t1 -. t0) in 
+  let insert_rate = (float_of_int nb_of_inserts ) /. (t1 -. t0) in 
+  
+  let rec aux btree = function
+    | i when i = (max_random + nb_of_inserts) -> btree 
+    | i -> 
+      let key, value = make_test_key_val i in 
+      let btree = S8BT.insert btree key value in 
+      aux btree (i + 1)
+  in 
+  let btree = aux btree max_random  in   
+  let t2 = Unix.gettimeofday () in 
+
+  let append_rate = (float_of_int nb_of_inserts) /. (t2 -. t1) in 
   
   let rec aux = function
     | 0 -> () 
     | i -> 
-      let key, value = make_test_key_val (Random.int nb_of_inserts) in 
+      let key, value = make_test_key_val (Random.int max_random) in 
       begin match S8BT.find btree key with
       | None -> () 
       | Some v -> assert (v = value) 
@@ -54,12 +66,14 @@ let run ~m () =
       aux (i - 1) 
 
   in 
-  aux nb_of_inserts; 
 
-  let t2 = Unix.gettimeofday () in
-  let read_rate = (float_of_int nb_of_inserts ) /. (t2 -. t1) in 
-  Printf.printf "m: %03i : write rate: %15.2f | read rate : %15.2f\n" 
-      m write_rate read_rate
+  let nb_of_reads = 2 * nb_of_inserts in 
+  aux nb_of_reads; 
+
+  let t3 = Unix.gettimeofday () in
+  let read_rate = (float_of_int nb_of_reads) /. (t3 -. t2) in 
+  Printf.printf "m: %03i : insert rate: %15.2f | append rate: %15.2f | read rate : %15.2f\n" 
+      m insert_rate append_rate read_rate
 
 let () =  
   if Array.length Sys.argv < 2 

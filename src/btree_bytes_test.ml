@@ -24,8 +24,29 @@ module String8 = struct
   let to_string x = x 
 
 end 
-
+  
 module S8BT = Btree_bytes.Make(String8)(String8)
+
+let make_test_key_val i = 
+  let key = Printf.sprintf "0000%04i" i in 
+  let value = Printf.sprintf "%04i0000" i in 
+  (key, value) 
+
+let rec verify_inserted t = function
+  | [] -> () 
+  | i :: tl -> 
+    let k, v = make_test_key_val i in 
+    match S8BT.find t k with
+    | None -> begin 
+      Printf.eprintf "Error, key: %s not found \n" k; 
+      assert(false)
+    end
+    | Some v' when v' <> v -> begin 
+      Printf.eprintf "Error, mismatch value for key: %s, expected: %s, got: %s \n" 
+        k v v'; 
+      assert(false)
+    end 
+    | _ -> verify_inserted t tl 
 
 let run_insert_find_test ?verify_at_end ~m ~l () = 
 
@@ -34,29 +55,6 @@ let run_insert_find_test ?verify_at_end ~m ~l () =
     | Some () -> true
   in 
 
-  let make_test_key_val i = 
-    let key = Printf.sprintf "0000%04i" i in 
-    let value = Printf.sprintf "%04i0000" i in 
-    (key, value) 
-  in 
-
-  let rec verify_inserted t = function
-    | [] -> () 
-    | i :: tl -> 
-      let k, v = make_test_key_val i in 
-      match S8BT.find t k with
-      | None -> begin 
-        Printf.eprintf "Error, key: %s not found \n" k; 
-        assert(false)
-      end
-      | Some v' when v' <> v -> begin 
-        Printf.eprintf "Error, mismatch value for key: %s, expected: %s, got: %s \n" 
-          k v v'; 
-        assert(false)
-      end 
-      | _ -> verify_inserted t tl 
-  in 
-  
   let rec aux t inserted = function
     | [] -> 
       if verify_at_end 
@@ -214,3 +212,47 @@ let () =
   List.iter (fun test -> 
     run_insert_find_test ~verify_at_end:() ~m:5 ~l:test ()
   ) (permute permutation_values)
+
+let () = 
+  Printf.printf "Append tests ...\n%!" 
+
+let run_append_find_test ~m ~l () = 
+
+  let rec aux t inserted = function
+    | [] -> () 
+
+    | i::tl -> begin  
+      let k, v = make_test_key_val i in 
+      let t = S8BT.append t k v in 
+      let inserted = i :: inserted in 
+      verify_inserted t inserted ;
+      aux t inserted tl  
+    end
+  in 
+
+  aux (S8BT.make ~m ()) [] l 
+
+let () = 
+  run_append_find_test ~m:3 ~l:[1] () 
+
+let () = 
+  run_append_find_test ~m:3 ~l:[4321] () 
+
+let () = 
+  run_append_find_test ~m:7 ~l:[4321] () 
+
+let () = 
+  run_append_find_test ~m:3 ~l:[1;2] () 
+
+let () = 
+  run_append_find_test ~m:7 ~l:[1;2] () 
+
+(* Node split + creation of new root *)
+
+(* case when the newly appended value is the median *)
+let () = 
+  run_append_find_test ~m:3 ~l:[1;2;3] () 
+
+(* Right most child is filling up [3;4] *)
+let () = 
+  run_append_find_test ~m:3 ~l:[1;2;3;4] () 

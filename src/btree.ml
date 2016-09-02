@@ -500,7 +500,31 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     end
 
   let insert t key value = insert (node_of_t t) key value 
-    (* To remove the optional argument *) 
+
+  let rec append ?is_root (node:node_on_disk) key value = 
+    Insert_res_read_data (node_block node (), (fun bytes -> 
+      let node =  make_as_bytes ~on_disk:node ~bytes () in 
+      append_as_bytes ?is_root node key value
+    )) 
+
+  and append_as_bytes ?is_root:(is_root = true) node key value = 
+
+    let { on_disk = {m; _;}; k; subs; _ } = node in 
+
+    let pos = nb_of_vals k in 
+    
+    if is_leaf k 
+    then 
+      insert_at_pos ~is_root ~node ~pos ~key ~value () 
+    else 
+      let sub_node = make_on_disk ~offset:(Ints.get subs pos) ~m () in 
+      append ~is_root:false sub_node key value 
+      |> intercept_node_split (fun (key, value, right_sub, write_ops) -> 
+        insert_at_pos 
+            ~is_root ~node ~pos ~key ~value ~right_sub ~write_ops ()  
+      ) 
+
+  let append t key value = append (node_of_t t) key value
 
   type find_res = 
     | Find_res_not_found 
