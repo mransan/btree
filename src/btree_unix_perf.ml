@@ -27,7 +27,7 @@ let run ~m () =
   let filename = Printf.sprintf "%04i.data" m in 
   let btree = S8BT.make ~filename ~m () in 
   
-  let nb_of_inserts = 10_00_000 in 
+  let nb_of_inserts = 100_000 in 
   let max_random = 10 * nb_of_inserts in 
 
   let rec aux btree = function

@@ -105,11 +105,13 @@ module type Val_sig = sig
 
 end (* Val *) 
 
+type file_offset = int
+
 type block_length = int 
 (** Length of a file block *)
 
 type block = {
-  offset: int; 
+  offset: file_offset; 
   length: block_length;
 }
 (** File block *)
@@ -121,29 +123,57 @@ type read_op = block
 (** Read operation *)
 
 type write_op = {
-  offset: int; 
+  offset: file_offset; 
   bytes : bytes;
 }
 (** Write operation : write [bytes] starting at [offset] in the file *)
 
 module Make (Key:Key_sig) (Val:Val_sig) : sig 
 
-  type node
+  type t = {
+    root_file_offset : file_offset;
+    m : int;
+  }
+  (** A Binary tree is defined by the file offset of the root
+      node as well as [m] the maximum number of subtree in a node 
+      (with m-1 being the maximum value in a Btree node). 
 
-  val make_node : offset:int -> m:int -> unit -> node
+      Both [root_file_offset] and [m] must be persisted by the caller
+      application. 
 
-  val initialize : node -> int * write_op  
+      [m] cannot change once a node has been initialized. It is the 
+      responsability of the caller to maintain that invariant. 
+
+      [root_file_offset] initial value is defined by the caller application
+      when calling [initialize]. [root_file_offset] is not constant and 
+      as the BTree grows a new root node might be created and 
+      [root_file_offset] will have a new value as defined in the 
+      return by the following returned value of [insert]: 
+      [Insert_res_done (Some new_root_file_offset), write_ops]. The calling
+      application is responsible to persist this new value so that
+      subsquent operation on the BTree succeeed. 
+
+    *)
+   
+  val make : root_file_offset:file_offset -> m:int -> unit -> t 
+
+  val initialize : t -> write_op  
   (** [initialize node] return [(length, write_op)]. [length] indicates 
     * the initial diskspace requires, and [write_op] the write operation 
     * to perform. 
     *)
 
   val node_length_of_m : int -> int 
+  (** [node_length_of_m m] return the length in byte of a BTree node. 
+      
+      This function should only be used for information and is not crucial
+      to interfacing with the BTree. 
+    *)
 
   (** {2 Insertion} *)
   
   type insert_res = 
-    | Insert_res_done of (int option * write_op list)  
+    | Insert_res_done of (file_offset option * write_op list)  
       (** [Insert_res_done (Some root_offset, write_ops], the key/value was 
           successfully inserted. [root_offset] is the new root offset of the 
           tree which should then be used in subsequent inserts/find/debug while 
@@ -163,11 +193,11 @@ module Make (Key:Key_sig) (Val:Val_sig) : sig
     (** Continuation function which takes the bytes read from the read 
         operation *)
 
-  and insert_res_allocate_continuation = int -> insert_res 
+  and insert_res_allocate_continuation = file_offset -> insert_res 
     (** Continuation function which takes the storage offset allocated
         for a new node *)
 
-  val insert : node -> Key.t -> Val.t -> insert_res
+  val insert : t -> Key.t -> Val.t -> insert_res
   (** [insert root_node key value] inserts the [key]/[value] pair in the 
       B-Tree. If [key] is found in the tree, then [value] replaces the previous
       value. *)
@@ -189,7 +219,7 @@ module Make (Key:Key_sig) (Val:Val_sig) : sig
     (** Continuation function which takes the bytes read from the read
         operation *)
 
-  val find : node -> Key.t -> find_res 
+  val find : t -> Key.t -> find_res 
   (** [find root_node key] searches for the [key] in the B-Tree starting at 
       the [root_node] *)
 
@@ -204,7 +234,7 @@ module Make (Key:Key_sig) (Val:Val_sig) : sig
 
   and debug_res_continuation = bytes -> debug_res  
 
-  val debug : node -> debug_res  
+  val debug : t -> debug_res  
   (** [debug root_node] pretty-prints to stdout the B-Tree starting at
       [root_node] *)
 

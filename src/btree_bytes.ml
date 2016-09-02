@@ -1,5 +1,5 @@
+(*
 let is_debug = false
-
 let printf = 
   if is_debug 
   then Printf.printf 
@@ -37,6 +37,7 @@ let string_of_bytes bytes : string =
 
   in 
   String.concat " " (aux 0) 
+*)
 
 module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct 
 
@@ -50,7 +51,7 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
     read_op_counter : int ref;
   }
 
-  let do_read_op read_op_counter storage ({Btree.offset;length} as block) = 
+  let do_read_op read_op_counter storage {Btree.offset;length}= 
     incr read_op_counter;
     (*printf "- reading block: %s" (Btree.string_of_block block);
      *)
@@ -91,15 +92,16 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
   
   let make ~m () = 
 
-    let node = Internal.make_node ~offset:0 ~m () in 
-    let length, write_op = Internal.initialize node in 
-    let storage = Bytes.create length in 
+    let node = Internal.make ~root_file_offset:0 ~m () in 
+    let {Btree.offset; bytes;} as write_op = Internal.initialize node in 
+    let storage = bytes in 
+    assert(offset = 0); 
     let write_op_counter = ref 0 in
     do_write_op write_op_counter storage write_op; 
     { storage; root_offset = 0; m; write_op_counter; read_op_counter = ref 0}
 
   let node_on_disk {root_offset; m; _} = 
-    Internal.make_node ~offset:root_offset ~m () 
+    Internal.make ~root_file_offset:root_offset ~m () 
 
   let insert t key value = 
     let {read_op_counter; write_op_counter; _ }  = t in 

@@ -64,11 +64,13 @@ module type Val_sig = sig
   include Fixed_size_sig with type t := t 
 end 
 
+type file_offset = int
+
 type block_length = int 
 
 (** File block *)
 type block = {
-  offset: int; 
+  offset: file_offset; 
   length: block_length;
 }
 
@@ -78,7 +80,7 @@ let string_of_block {offset; length} =
   Printf.sprintf "{offset: %i, length: %i}" offset length
 
 type write_op = {
-  offset : int; 
+  offset : file_offset; 
   bytes : bytes;
 } 
 
@@ -92,7 +94,7 @@ type read_op = block
 module FS_array(FS:Fixed_size_sig) =  struct 
 
   type t = {
-    offset: int;  (* where in [byte] does the array starts *) 
+    offset: file_offset;  (* where in [byte] does the array starts *) 
     bytes: bytes; (* contains [Fixed_size_sig] values starting at [offset] *) 
   } 
 
@@ -177,13 +179,16 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
   module Keys = FS_array(Key) 
   module Vals = FS_array(Val)
   module Ints = FS_array(Int)
+  
+  type t = {
+    root_file_offset : file_offset;
+    m : int;
+  }
 
   type node_on_disk = {
     offset: int; 
     m : int; 
   }
-
-  type node = node_on_disk
 
   type node_in_memory = {
     on_disk : node_on_disk;
@@ -210,7 +215,9 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
   let make_on_disk ~offset ~m () = {offset; m}
 
-  let make_node = make_on_disk
+  let make ~root_file_offset ~m () = {root_file_offset; m;} 
+
+  let node_of_t {root_file_offset; m} = {offset = root_file_offset; m;}
 
   let is_leaf k = 
     (* we use the sign of k to determine whether the node is a
@@ -265,24 +272,24 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
   let node_write_op {bytes; on_disk = {offset; _}; _ } = 
     make_write_op ~offset ~bytes ()
   
-  let initialize ({offset; m} : node_on_disk) = 
+  let initialize {root_file_offset = offset; m} = 
     let length = node_length_of_m m in 
     let bytes = Bytes.create length in 
     let k = 0 in 
     Int.to_bytes k bytes 0; 
     (* no keys, vals, subs values -> we leave bytes with uninitialized 
      * values *)
-    (length, make_write_op ~offset ~bytes ()) 
+    make_write_op ~offset ~bytes ()
 
   type insert_res = 
-    | Insert_res_done of (int option * write_op list)  
+    | Insert_res_done of (file_offset option * write_op list)  
     | Insert_res_read_data of block * insert_res_read_data_continuation  
     | Insert_res_allocate of block_length * insert_res_allocate_continuation 
-    | Insert_res_node_split of (Key.t * Val.t * int * write_op list) 
+    | Insert_res_node_split of (Key.t * Val.t * file_offset * write_op list) 
   
   and insert_res_read_data_continuation = bytes -> insert_res  
 
-  and insert_res_allocate_continuation = int -> insert_res 
+  and insert_res_allocate_continuation = file_offset -> insert_res 
 
   let rec intercept_node_split f ret = 
     match ret with 
@@ -492,7 +499,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
         ) 
     end
 
-  let insert root_node key value = insert root_node key value 
+  let insert t key value = insert (node_of_t t) key value 
     (* To remove the optional argument *) 
 
   type find_res = 
@@ -518,6 +525,8 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
         let sub_offset = Ints.get subs i in 
         let sub_node = make_on_disk ~offset:sub_offset ~m () in 
         find sub_node key
+
+  let find t key = find (node_of_t t) key 
   
   type debug_res = 
     | Debug_res_done  
@@ -572,5 +581,5 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       end
     )
 
-  let debug node = debug node 
+  let debug t = debug (node_of_t t)
 end (* Make *) 
