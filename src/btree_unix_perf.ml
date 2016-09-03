@@ -30,32 +30,32 @@ let run ~m () =
   let nb_of_inserts = 100_000 in 
   let max_random = 10 * nb_of_inserts in 
 
-  let rec aux btree = function
+  let rec insert_aux btree = function
     | 0 -> btree 
     | i -> 
       let key, value = make_test_key_val (Random.int max_random) in 
       let btree = S8BT.insert btree key value in 
-      aux btree (i - 1) 
+      insert_aux btree (i - 1) 
   in 
   
   let t0 =  Unix.gettimeofday () in 
-  let btree = aux btree nb_of_inserts in
+  let btree = insert_aux btree nb_of_inserts in
   let t1 = Unix.gettimeofday () in 
   let insert_rate = (float_of_int nb_of_inserts ) /. (t1 -. t0) in 
   
-  let rec aux btree = function
+  let rec append_aux btree = function
     | i when i = (max_random + nb_of_inserts) -> btree 
     | i -> 
       let key, value = make_test_key_val i in 
-      let btree = S8BT.insert btree key value in 
-      aux btree (i + 1)
+      let btree = S8BT.append btree key value in 
+      append_aux btree (i + 1)
   in 
-  let btree = aux btree max_random  in   
+  let btree = append_aux btree max_random  in   
   let t2 = Unix.gettimeofday () in 
 
   let append_rate = (float_of_int nb_of_inserts) /. (t2 -. t1) in 
   
-  let rec aux = function
+  let rec read_aux = function
     | 0 -> () 
     | i -> 
       let key, value = make_test_key_val (Random.int max_random) in 
@@ -63,12 +63,12 @@ let run ~m () =
       | None -> () 
       | Some v -> assert (v = value) 
       end; 
-      aux (i - 1) 
+      read_aux (i - 1) 
 
   in 
 
   let nb_of_reads = 2 * nb_of_inserts in 
-  aux nb_of_reads; 
+  read_aux nb_of_reads; 
 
   let t3 = Unix.gettimeofday () in
   let read_rate = (float_of_int nb_of_reads) /. (t3 -. t2) in 
