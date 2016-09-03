@@ -258,6 +258,10 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
   let node_block {offset; m;} =
     make_block ~offset ~length:(node_length_of_m m) 
+  
+  let sub_node_at ~subs ~pos ~m () = 
+    let sub_offset = Ints.get subs pos in 
+    make_on_disk  ~offset:sub_offset ~m () 
 
   let keys_vals_subs ~m ~bytes () =
     let keys = Keys.make ~offset:(keys_offset m) ~bytes () in 
@@ -491,8 +495,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       then 
         insert_at_pos ~is_root ~node ~pos ~key ~value () 
       else 
-        let sub_node = make_on_disk ~offset:(Ints.get subs pos) ~m () in 
-        insert ~is_root:false sub_node key value 
+        insert ~is_root:false (sub_node_at ~subs ~pos ~m ()) key value 
         |> intercept_node_split (fun (key, value, right_sub, write_ops) -> 
           insert_at_pos 
               ~is_root ~node ~pos ~key ~value ~right_sub ~write_ops ()  
@@ -549,6 +552,68 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
         let sub_offset = Ints.get subs i in 
         let sub_node = make_on_disk ~offset:sub_offset ~m () in 
         find sub_node key
+
+  type find_gt_res = 
+    | Find_gt_res_values of Val.t list 
+    | Find_gt_res_read_data of block * find_gt_res_continuation  
+
+  and find_gt_res_continuation = bytes -> find_gt_res  
+
+  let collect_gt vals pos nb_of_vals = 
+    assert(pos <= nb_of_vals);
+    assert(pos >=0);
+      (* otherwise loop below won't terminate *)
+    let rec aux l = function 
+      | i when i < pos -> l 
+      | i -> aux ((Vals.get vals i) :: l) (i - 1)
+    in
+    aux [] (nb_of_vals - 1)
+
+  let rec find_gt (node:node_on_disk) key : find_gt_res = 
+    Find_gt_res_read_data (node_block node (), fun bytes -> 
+      find_gt_as_bytes (make_as_bytes ~on_disk:node ~bytes ()) key
+    ) 
+
+  and find_gt_as_bytes node key = 
+    let {k; vals; subs; on_disk = {m; _}; _ } = node in 
+    match find_key_insert_position node key with
+    | `Update_at pos -> 
+      if is_leaf k 
+      then Find_gt_res_values (collect_gt vals (pos + 1) (nb_of_vals k)) 
+      else find_gt (sub_node_at ~subs ~pos:(pos + 1) ~m ()) key
+
+    | `Insert_at pos -> 
+      if is_leaf k 
+      then 
+        Find_gt_res_values (collect_gt vals pos (nb_of_vals k)) 
+      else 
+        let rec aux ?to_add ret = 
+          match ret with
+          | Find_gt_res_values [] ->
+            if pos = nb_of_subs k - 1
+            then 
+              Find_gt_res_values (match to_add with | None -> [] | Some x -> [x])
+            else begin   
+              assert(None = to_add);
+              let to_add = Vals.get vals pos in 
+              let sub_node = sub_node_at ~subs ~pos:(pos + 1) ~m () in
+              find_gt sub_node key |> aux ~to_add
+            end
+
+          | Find_gt_res_values values -> begin 
+            match to_add with
+            | None -> ret 
+            | Some x -> Find_gt_res_values (x::values) 
+            end
+
+          | Find_gt_res_read_data (block, continuation) -> 
+            Find_gt_res_read_data (block, fun bytes ->
+              bytes |> continuation |> aux ?to_add 
+            ) 
+        in 
+        find_gt (sub_node_at ~subs ~pos ~m ()) key |> aux ?to_add:None 
+
+  let find_gt t key = find_gt (node_of_t t) key 
 
   let find t key = find (node_of_t t) key 
   

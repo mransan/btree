@@ -237,6 +237,26 @@ module Make (Key:Key_sig) (Val:Val_sig) : sig
   (** [find root_node key] searches for the [key] in the B-Tree starting at 
       the [root_node] *)
 
+  type find_gt_res = 
+    | Find_gt_res_values of Val.t list 
+      (** [Find_gt_res_values values] a non deterministic number 
+          of values which are found to be greater than the given 
+          key *)
+    | Find_gt_res_read_data of block * find_gt_res_continuation  
+      (** Read a block of storage *)
+
+  and find_gt_res_continuation = bytes -> find_gt_res  
+    (** Continuation function which takes the bytes read from the
+        read operation *)
+
+  val find_gt : t -> Key.t -> find_gt_res 
+  (** [find_gt t key] finds values which are greater than [key] in 
+      the tree. The number of returned values is undefined however if there is 
+      at least one value greater than [key] it will be returned. 
+
+      The number of values returned is maximized for a minimum number of read. 
+    *)
+
   (** {2 Debugging} *)
 
   type debug_res = 

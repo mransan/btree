@@ -139,6 +139,14 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
       | Internal.Find_res_val v -> Some v 
     in
     Internal.find (node_on_disk t) key |> aux 
+  
+  let find_gt ({storage; read_op_counter; _} as t) key = 
+    let rec aux = function
+      | Internal.Find_gt_res_values values -> values 
+      | Internal.Find_gt_res_read_data (block, k) -> 
+        do_read_op read_op_counter storage block |> k |>  aux 
+    in
+    Internal.find_gt (node_on_disk t) key |> aux 
 
   module Stats = struct 
 
