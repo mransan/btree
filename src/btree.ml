@@ -589,16 +589,15 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       else 
         let rec aux ?to_add ret = 
           match ret with
-          | Find_gt_res_values [] ->
+          | Find_gt_res_values [] -> begin 
+            assert (None = to_add); 
             if pos = nb_of_subs k - 1
-            then 
-              Find_gt_res_values (match to_add with | None -> [] | Some x -> [x])
-            else begin   
-              assert(None = to_add);
+            then Find_gt_res_values []
+            else
               let to_add = Vals.get vals pos in 
               let sub_node = sub_node_at ~subs ~pos:(pos + 1) ~m () in
               find_gt sub_node key |> aux ~to_add
-            end
+          end
 
           | Find_gt_res_values values -> begin 
             match to_add with

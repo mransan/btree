@@ -1,9 +1,9 @@
-OCB_INC  += -I src/
+OCB_INC  += -I src/ -X js/
 #OCB_FLAGS += -ocamlopt ocamloptp
 OCB_FLAGS += -use-ocamlfind -pkgs unix 
 OCB       = ocamlbuild $(OCB_FLAGS) $(OCB_INC)
 
-.PHONY: all build perf unix test 
+.PHONY: all build perf unix test js 
 
 all: build test perf
 
@@ -38,6 +38,9 @@ perf.unix: build
   
 test: build 
 	export OCAMLRUNPARAM="b" && ./btree_bytes_test.native
+
+js: build
+	cd js/node_modules/btree && npm run build && node src/btree_bytes_test.js  
 
 build:
 	$(OCB) btree_bytes_test.native
