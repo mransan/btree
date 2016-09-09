@@ -134,6 +134,21 @@ module Make (Key:Key_sig) (Val:Val_sig) : sig
     root_file_offset : file_offset;
     m : int;
   }
+
+  type 'a res = 
+    | Res_done of 'a 
+      (** Computation is done and the result returned *)
+    | Res_read_data of block * 'a res_read_data_k 
+      (** Reading a block of data is required *)
+    | Res_allocate of block_length * 'a res_allocate_k 
+      (** Allocating a new block of data is required *)
+
+  and 'a res_read_data_k = bytes -> 'a res 
+    (** Continuation function after reading a block of data *)
+
+  and 'a res_allocate_k = file_offset -> 'a res 
+    (** Continuation function after allocating a block of data *)
+
   (** A Binary tree is defined by the file offset of the root
       node as well as [m] the maximum number of subtree in a node 
       (with m-1 being the maximum value in a Btree node). 
@@ -171,31 +186,18 @@ module Make (Key:Key_sig) (Val:Val_sig) : sig
     *)
 
   (** {2 Insertion} *)
-  
-  type insert_res = 
+
+  type insert_res_data = 
     | Insert_res_done of (file_offset option * write_op list)  
       (** [Insert_res_done (Some root_offset, write_ops], the key/value was 
           successfully inserted. [root_offset] is the new root offset of the 
           tree which should then be used in subsequent inserts/find/debug while 
           [write_ops] are the write operation necessary for the inserts to 
           take effect. *)
-
-    | Insert_res_read_data of block * insert_res_read_data_continuation  
-      (** Read a block of storage *)
-
-    | Insert_res_allocate of block_length * insert_res_allocate_continuation 
-      (** Allocate a new block of storage of given length *)
-
     | Insert_res_node_split of (Key.t * Val.t * int * write_op list) 
       (** Internal, should never be returned *)
-
-  and insert_res_read_data_continuation = bytes -> insert_res  
-    (** Continuation function which takes the bytes read from the read 
-        operation *)
-
-  and insert_res_allocate_continuation = file_offset -> insert_res 
-    (** Continuation function which takes the storage offset allocated
-        for a new node *)
+  
+  type insert_res = insert_res_data res  
 
   val insert : t -> Key.t -> Val.t -> insert_res
   (** [insert root_node key value] inserts the [key]/[value] pair in the 
@@ -218,36 +220,16 @@ module Make (Key:Key_sig) (Val:Val_sig) : sig
 
   (** {2 Search} *)
   
-  type find_res = 
-    | Find_res_not_found 
-      (** The given [key] was not found in the B-Tree *)
+  type find_res_data = Val.t option 
+  (** find result type. If [None] then no value was found. *) 
 
-    | Find_res_val of Val.t 
-      (** The given [key] was found in the B-Tree and the associated
-          [value] is returned *)
-
-    | Find_res_read_data of block * find_res_continuation  
-      (** Read a block of storage *)
-
-  and find_res_continuation = bytes -> find_res 
-    (** Continuation function which takes the bytes read from the read
-        operation *)
+  type find_res = find_res_data res 
 
   val find : t -> Key.t -> find_res 
   (** [find root_node key] searches for the [key] in the B-Tree starting at 
       the [root_node] *)
 
-  type find_gt_res = 
-    | Find_gt_res_values of Val.t list 
-      (** [Find_gt_res_values values] a non deterministic number 
-          of values which are found to be greater than the given 
-          key *)
-    | Find_gt_res_read_data of block * find_gt_res_continuation  
-      (** Read a block of storage *)
-
-  and find_gt_res_continuation = bytes -> find_gt_res  
-    (** Continuation function which takes the bytes read from the
-        read operation *)
+  type find_gt_res = Val.t list res  
 
   val find_gt : t -> Key.t -> find_gt_res 
   (** [find_gt t key] finds values which are greater than [key] in 
@@ -259,14 +241,7 @@ module Make (Key:Key_sig) (Val:Val_sig) : sig
 
   (** {2 Debugging} *)
 
-  type debug_res = 
-    | Debug_res_done  
-      (** Debugging is done executing *)
-
-    | Debug_res_read_data of block * debug_res_continuation 
-      (** Read a block of storage *)
-
-  and debug_res_continuation = bytes -> debug_res  
+  type debug_res = unit res  
 
   val debug : t -> debug_res  
   (** [debug root_node] pretty-prints to stdout the B-Tree starting at

@@ -37,8 +37,8 @@ end
 module S8BT = Btree_bytes.Make(String8)(String8)
 
 let make_test_key_val i = 
-  let key = Printf.sprintf "0000%04i" i in 
-  let value = Printf.sprintf "%04i0000" i in 
+  let key = Printf.sprintf "000%05i" i in 
+  let value = Printf.sprintf "%05i000" i in 
   (key, value) 
 
 
@@ -363,3 +363,17 @@ let () =
   assert_bool(val5::[]       = S8BT.find_gt btree key4);
   assert_bool([]             = S8BT.find_gt btree key5);
   ()
+
+(** Debug *) 
+
+let () = 
+  print_endline "Debug test ... " 
+
+let () = 
+  let rec aux t = function 
+    | 11 -> S8BT.debug t  
+    | i -> 
+      let k,v  = make_test_key_val i in 
+      aux (S8BT.insert t k v) (i + 1) 
+  in 
+  aux (S8BT.make ~m:3 ()) 0

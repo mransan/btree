@@ -41,6 +41,13 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
     } in 
     do_write_op fd write_op; 
     offset
+
+  let rec do_res fd = function  
+    | Internal.Res_done x -> x 
+    | Internal.Res_read_data (block, k) -> 
+      do_read_op fd block |> k |> do_res fd 
+    | Internal.Res_allocate (block_length, k) ->
+      do_allocate fd block_length |> k  |>  do_res fd 
   
   let make ~filename ~m () = 
     let node = Internal.make ~root_file_offset:0 ~m () in 
@@ -52,18 +59,15 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
   let node_on_disk {root_offset; m; _} = 
     Internal.make ~root_file_offset:root_offset ~m () 
     
-  let rec insert_aux ({fd;_} as t) = function 
+  let insert_aux ({fd;_} as t) res = 
+    match do_res fd res with
     | Internal.Insert_res_done (root_offset, write_ops) -> begin  
       do_write_ops fd write_ops;
       match root_offset with
       | None -> t 
       | Some root_offset -> {t with root_offset} 
     end 
-    | Internal.Insert_res_read_data (block, k) ->  
-      do_read_op fd block |> k |> insert_aux t
-    | Internal.Insert_res_allocate (length, k) -> 
-      do_allocate fd length |> k |> insert_aux t
-    | _ -> assert(false)
+    | Internal.Insert_res_node_split _ -> assert(false)
 
   let insert t key value = 
     Internal.insert (node_on_disk t) key value |> insert_aux t 
@@ -72,20 +76,9 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
     Internal.append (node_on_disk t) key value |> insert_aux t 
 
   let debug ({fd; _} as t)= 
-    let rec aux = function
-      | Internal.Debug_res_read_data (block, k) -> 
-        do_read_op fd block |> k |> aux 
-      | Internal.Debug_res_done  -> () 
-    in 
-    Internal.debug (node_on_disk t) |> aux 
+    Internal.debug (node_on_disk t) |> do_res fd 
 
   let find ({fd; _} as t)key = 
-    let rec aux = function
-      | Internal.Find_res_not_found -> None 
-      | Internal.Find_res_read_data (block, k) -> 
-        do_read_op fd block |> k |>  aux 
-      | Internal.Find_res_val v -> Some v 
-    in
-    Internal.find (node_on_disk t) key |> aux 
+    Internal.find (node_on_disk t) key |> do_res fd 
 
 end (* Make *) 
