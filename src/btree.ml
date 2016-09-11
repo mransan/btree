@@ -143,14 +143,7 @@ module FS_array(FS:Fixed_size_sig) =  struct
     let {offset = offset2; bytes = bytes2 } = t2 in 
     let bo1 = offset1 + o1 * FS.length in 
     let bo2 = offset2 + o2 * FS.length in 
-    if bytes1 == bytes2 
-    then begin 
-      let bytes2' = Bytes.copy bytes2 in 
-      Bytes.blit bytes1 bo1 bytes2' bo2 (len * FS.length);
-      Bytes.blit bytes2' 0  bytes2  0  (Bytes.length bytes2)
-    end
-    else 
-      Bytes.blit bytes1 bo1 bytes2 bo2 (len * FS.length)
+    Bytes.blit bytes1 bo1 bytes2 bo2 (len * FS.length)
 
   (* n is the number of element prior to the insert *)
   let unsafe_insert_shift_right ({offset; bytes} as t) pos n v = 
