@@ -202,6 +202,15 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     | Res_allocate (length, k) -> 
       Res_allocate (length, fun offset -> k offset |> res_bind f)
 
+  let rec res_map f = function
+    | Res_done x -> Res_done (f x) 
+
+    | Res_read_data (block, k) -> 
+      Res_read_data (block, fun bytes -> k bytes |> res_map f) 
+
+    | Res_allocate (length, k) -> 
+      Res_allocate (length, fun offset -> k offset |> res_map f)
+
   type t = {
     root_file_offset : file_offset;
     m : int;
@@ -589,32 +598,37 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
   and find_gt_as_bytes node out_vals key = 
     let {k; vals; subs; on_disk = {m; _}; _ } = node in 
-    match find_key_insert_position node key with
-    | `Update_at pos -> 
-      if is_leaf k 
-      then res_done (collect_gt out_vals vals (pos + 1) (nb_of_vals k)) 
-      else find_gt (sub_node_at ~subs ~pos:(pos + 1) ~m ()) out_vals key
-
-    | `Insert_at pos -> 
-      if is_leaf k 
-      then 
-        res_done (collect_gt out_vals vals pos (nb_of_vals k)) 
-      else 
-        let sub_node = sub_node_at ~subs ~pos ~m () in 
-        find_gt sub_node out_vals key |> res_bind (function
-          | [] -> 
-            if pos = nb_of_subs k - 1
-            then res_done []
-            else
-              let value = Vals.get vals pos in 
-              let sub_node = sub_node_at ~subs ~pos:(pos + 1) ~m () in
-              find_gt sub_node (value :: out_vals) key 
-          | l -> res_done l 
-        ) 
+    let pos = 
+      match find_key_insert_position node key with
+      | `Update_at pos -> pos + 1 
+      | `Insert_at pos -> pos 
+    in 
+    if is_leaf k 
+    then 
+      res_done (collect_gt out_vals vals pos (nb_of_vals k)) 
+    else 
+      let sub_node = sub_node_at ~subs ~pos ~m () in 
+      find_gt sub_node out_vals key |> res_bind (function
+        | [] -> 
+          (* If no values was found in the sub node then this means
+           * that the first value greated than the key is in this 
+           * intermediate node at [pos] and we should then 
+           * continue the interation with the sub node next to the right
+           * of this value. If this already was the right most 
+           * sub node then this operation will be done by the upper
+           * node (and so forth until the root).  
+           *)
+          if pos = nb_of_subs k - 1
+          then res_done []
+          else
+            let value = Vals.get vals pos in 
+            let sub_node = sub_node_at ~subs ~pos:(pos + 1) ~m () in
+            find_gt sub_node (value :: out_vals) key 
+        | l -> res_done l 
+      ) 
 
   let find_gt t key = 
-    find_gt (node_of_t t) [] key |> res_bind (fun values -> 
-      res_done (List.rev values)) 
+    find_gt (node_of_t t) [] key |> res_map List.rev 
 
   let find t key = find (node_of_t t) key 
   

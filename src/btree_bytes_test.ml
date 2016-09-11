@@ -330,7 +330,6 @@ let () =
   assert_bool([] = S8BT.find_gt btree key1);
 
   let btree = insert_l btree 1 in 
-  print_string_list @@ S8BT.find_gt btree key1;
   assert_bool([] = S8BT.find_gt btree key1);
 
   let btree = insert_l btree 2 in 
@@ -363,7 +362,47 @@ let () =
   assert_bool(val4::val5::[] = S8BT.find_gt btree key3);
   assert_bool(val5::[]       = S8BT.find_gt btree key4);
   assert_bool([]             = S8BT.find_gt btree key5);
+
   ()
+
+let run_insert_find_gt_test ~m ~l () = 
+
+  let rec aux min max btree = function 
+    | [] -> (min, max, btree) 
+    | i :: tl -> 
+      let max = Pervasives.max max i in 
+      let min = Pervasives.min min i in 
+      let k, v = make_test_key_val i in 
+      let btree = S8BT.insert btree k v in 
+      aux min max btree tl 
+  in 
+
+  let min, max, btree = aux max_int min_int (S8BT.make ~m ()) l in 
+  
+  for i = min to max - 1 do 
+    let k, v = make_test_key_val i in 
+    match S8BT.find_gt btree k with
+    | v'::_ when v' > v -> () 
+    | _ -> assert(false) 
+  done; 
+
+  let k, _ = make_test_key_val max in 
+  begin match S8BT.find_gt btree k with
+  | [] -> ()
+  | _ -> assert(false)
+  end
+
+let () = 
+  run_insert_find_gt_test ~m:3 ~l:(generate_n_list ~n:5_000 ~max:50_000 ()) ()
+
+let () = 
+  run_insert_find_gt_test ~m:3 ~l:(generate_n_list ~n:1_000 ~max:1_000 ()) ()
+
+let () = 
+  run_insert_find_gt_test ~m:7 ~l:(generate_n_list ~n:1_000 ~max:10_000 ()) ()
+
+let () = 
+  run_insert_find_gt_test ~m:2001 ~l:(generate_n_list ~n:1_000 ~max:10_000 ()) ()
 
 (** Debug *) 
 
