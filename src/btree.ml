@@ -572,61 +572,49 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
   type find_gt_res = Val.t list res  
 
-  let collect_gt vals pos nb_of_vals = 
+  let collect_gt out_vals vals pos nb_of_vals = 
     assert(pos <= nb_of_vals);
     assert(pos >=0);
       (* otherwise loop below won't terminate *)
-    let rec aux l = function 
-      | i when i < pos -> l 
-      | i -> aux ((Vals.get vals i) :: l) (i - 1)
+    let rec aux out_vals = function 
+      | i when i = nb_of_vals -> out_vals 
+      | i -> aux ((Vals.get vals i) :: out_vals ) (i + 1)
     in
-    aux [] (nb_of_vals - 1)
+    aux out_vals pos 
 
-  let rec find_gt (node:node_on_disk) key : find_gt_res = 
+  let rec find_gt (node:node_on_disk) out_vals key : find_gt_res = 
     res_read_data (node_block node ()) (fun bytes -> 
-      find_gt_as_bytes (make_as_bytes ~on_disk:node ~bytes ()) key
+      find_gt_as_bytes (make_as_bytes ~on_disk:node ~bytes ()) out_vals key
     ) 
 
-  and find_gt_as_bytes node key = 
+  and find_gt_as_bytes node out_vals key = 
     let {k; vals; subs; on_disk = {m; _}; _ } = node in 
     match find_key_insert_position node key with
     | `Update_at pos -> 
       if is_leaf k 
-      then res_done (collect_gt vals (pos + 1) (nb_of_vals k)) 
-      else find_gt (sub_node_at ~subs ~pos:(pos + 1) ~m ()) key
+      then res_done (collect_gt out_vals vals (pos + 1) (nb_of_vals k)) 
+      else find_gt (sub_node_at ~subs ~pos:(pos + 1) ~m ()) out_vals key
 
     | `Insert_at pos -> 
       if is_leaf k 
       then 
-        res_done (collect_gt vals pos (nb_of_vals k)) 
+        res_done (collect_gt out_vals vals pos (nb_of_vals k)) 
       else 
-        let rec aux ?to_add ret = 
-          match ret with
-          | Res_done [] -> begin 
-            assert (None = to_add); 
+        let sub_node = sub_node_at ~subs ~pos ~m () in 
+        find_gt sub_node out_vals key |> res_bind (function
+          | [] -> 
             if pos = nb_of_subs k - 1
-            then Res_done []
+            then res_done []
             else
-              let to_add = Vals.get vals pos in 
+              let value = Vals.get vals pos in 
               let sub_node = sub_node_at ~subs ~pos:(pos + 1) ~m () in
-              find_gt sub_node key |> aux ~to_add
-          end
+              find_gt sub_node (value :: out_vals) key 
+          | l -> res_done l 
+        ) 
 
-          | Res_done values -> begin 
-            match to_add with
-            | None -> ret 
-            | Some x -> Res_done (x::values) 
-            end
-
-          | Res_read_data (block, continuation) -> 
-            Res_read_data (block, fun bytes ->
-              bytes |> continuation |> aux ?to_add 
-            ) 
-          | _ -> assert(false)
-        in 
-        find_gt (sub_node_at ~subs ~pos ~m ()) key |> aux ?to_add:None 
-
-  let find_gt t key = find_gt (node_of_t t) key 
+  let find_gt t key = 
+    find_gt (node_of_t t) [] key |> res_bind (fun values -> 
+      res_done (List.rev values)) 
 
   let find t key = find (node_of_t t) key 
   

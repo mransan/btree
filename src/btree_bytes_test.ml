@@ -2,12 +2,12 @@ let test_type = `Fast
 
 (*  Helps in debugging 
  
+ *)
 let print_string_list l = 
   Printf.printf "["; 
   List.iter (fun e -> Printf.printf "%s, " e) l; 
   Printf.printf "]"
 
- *)
 
 module String8 = struct 
   type t = string 
@@ -330,6 +330,7 @@ let () =
   assert_bool([] = S8BT.find_gt btree key1);
 
   let btree = insert_l btree 1 in 
+  print_string_list @@ S8BT.find_gt btree key1;
   assert_bool([] = S8BT.find_gt btree key1);
 
   let btree = insert_l btree 2 in 

@@ -37,10 +37,10 @@ perf.unix: build
 	@export OCAMLRUNPARAM="b" && rm -f *.data && ./btree_unix_perf.native 75
   
 test: build 
-	export OCAMLRUNPARAM="b" && ./btree_bytes_test.native
+	export OCAMLRUNPARAM="b" && time ./btree_bytes_test.native
 
 js: build
-	cd js/node_modules/btree && npm run build && node src/btree_bytes_test.js  
+	cd js/node_modules/btree && npm run build && time node src/btree_bytes_test.js  
 
 build:
 	$(OCB) btree_bytes_test.native
