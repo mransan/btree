@@ -581,22 +581,47 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
   type find_gt_res = Val.t list res  
 
-  let collect_gt out_vals vals pos nb_of_vals = 
+  type counter = {
+    mutable i : int ; 
+    max : int; 
+  }
+  (* counter type to keep track (efficiently) of the 
+   * current number of values collected and check that 
+   * the requested [max] number is reached or not. 
+   *
+   * Note that this creates an invariant that the [i] 
+   * value in the counter should be equal to the [List.length out_vals]
+   * while collecting values. The counter is therefore used for 
+   * efficiency reason since [List.length] has linear complexity. 
+   *)
+
+  let counter_make max = {i = 0; max }
+
+  let counter_incr c = 
+    c.i <- c.i + 1 
+  
+  let counter_is_max_reached {i; max} = 
+    i >= max  
+
+  let collect_gt out_vals counter vals pos nb_of_vals = 
     assert(pos <= nb_of_vals);
     assert(pos >=0);
       (* otherwise loop below won't terminate *)
     let rec aux out_vals = function 
-      | i when i = nb_of_vals -> out_vals 
-      | i -> aux ((Vals.get vals i) :: out_vals ) (i + 1)
+      | i when i = nb_of_vals || counter_is_max_reached counter -> out_vals 
+      | i -> begin 
+        counter_incr counter; 
+        aux ((Vals.get vals i) :: out_vals ) (i + 1)
+      end
     in
     aux out_vals pos 
 
-  let rec find_gt (node:node_on_disk) out_vals key : find_gt_res = 
+  let rec find_gt (node:node_on_disk) out_vals counter key : find_gt_res = 
     res_read_data (node_block node ()) (fun bytes -> 
-      find_gt_as_bytes (make_as_bytes ~on_disk:node ~bytes ()) out_vals key
+      find_gt_as_bytes (make_as_bytes ~on_disk:node ~bytes ()) out_vals counter key
     ) 
 
-  and find_gt_as_bytes node out_vals key = 
+  and find_gt_as_bytes node out_vals counter key = 
     let {k; vals; subs; on_disk = {m; _}; _ } = node in 
     let pos = 
       match find_key_insert_position node key with
@@ -605,36 +630,45 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     in 
     if is_leaf k 
     then 
-      res_done (collect_gt out_vals vals pos (nb_of_vals k)) 
+      res_done (collect_gt out_vals counter vals pos (nb_of_vals k)) 
     else 
-      let sub_node = sub_node_at ~subs ~pos ~m () in 
-      find_gt sub_node out_vals key |> res_bind (function
-        | [] -> 
-          (* If no values was found in the sub node then this means
-           * that the first value greated than the key is in this 
-           * intermediate node at [pos] and we should then 
-           * continue the interation with the sub node next to the right
-           * of this value. If this already was the right most 
-           * sub node then this operation will be done by the upper
-           * node (and so forth until the root).  
-           *)
-          if pos = nb_of_subs k - 1
-          then res_done []
-          else
-            let value = Vals.get vals pos in 
-            let sub_node = sub_node_at ~subs ~pos:(pos + 1) ~m () in
-            find_gt sub_node (value :: out_vals) key 
-        | l -> res_done l 
-      ) 
 
-  let find_gt t key = 
-    find_gt (node_of_t t) [] key |> res_map List.rev 
+      let rec aux out_vals counter pos = 
+        let sub_node = sub_node_at ~subs ~pos ~m () in 
+        find_gt sub_node out_vals counter key |> res_bind (function
+          | [] as out_vals 
+          | out_vals when not (counter_is_max_reached counter) -> 
+            (* If no values was found (or not enough values are collected 
+             * so far) in the sub nodes then this means
+             * that the first value greater than the key is in this 
+             * intermediate node at [pos] and we should then 
+             * continue the interation with the sub node next to the right
+             * of this value. If this already was the right most 
+             * sub node then this operation will be done by the upper
+             * node (and so forth until the root).  
+             *)
+            if pos = nb_of_subs k - 1
+            then res_done out_vals 
+            else begin 
+              let out_vals = (Vals.get vals pos) :: out_vals in 
+              counter_incr counter; 
+              aux out_vals counter (pos + 1) 
+            end
+          | out_vals -> res_done out_vals 
+        ) 
+      in 
+      aux out_vals counter pos 
+
+  let find_gt t key max = 
+    let counter = counter_make max in 
+    find_gt (node_of_t t) [] counter key |> res_map List.rev 
 
   let find t key = find (node_of_t t) key 
   
   type debug_res = unit res  
 
-  let indent_string  n = String.make n ' ' 
+  let indent_string n = String.make n ' ' 
+    (* add memoization *)
 
   let rec debug ?indent:(indent = 0) node = 
     let node_block = node_block node () in 

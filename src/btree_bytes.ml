@@ -145,8 +145,10 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
        * by a find operation *)
     res 
   
-  let find_gt ({storage; _} as t) key = 
-    let storage', res = do_res storage @@ Internal.find_gt (node_on_disk t) key in 
+  let find_gt ({storage; _} as t) key max = 
+    let storage', res = 
+       do_res storage @@ Internal.find_gt (node_on_disk t) key max 
+    in 
     assert(storage == storage');
       (* ignore storage since we know that storage should not be modified 
        * by a find operation *)

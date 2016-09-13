@@ -231,12 +231,9 @@ module Make (Key:Key_sig) (Val:Val_sig) : sig
 
   type find_gt_res = Val.t list res  
 
-  val find_gt : t -> Key.t -> find_gt_res 
-  (** [find_gt t key] finds values which are greater than [key] in 
-      the tree. The number of returned values is undefined however if there is 
-      at least one value greater than [key] it will be returned. 
-
-      The number of values returned is maximized for a minimum number of read. 
+  val find_gt : t -> Key.t -> int -> find_gt_res 
+  (** [find_gt t key max] finds at most [max] values which are greater than [key] in 
+      the tree.
     *)
 
   (** {2 Debugging} *)

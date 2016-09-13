@@ -321,28 +321,29 @@ let () =
 let prefix = "Find gt test"
 
 let () =
+  let max = 1_000 in 
   let btree = S8BT.make ~m:3 () in 
   let insert_l t i =
     let k, v = make_test_key_val i in 
     S8BT.insert t k v 
   in
   let key1, _ = make_test_key_val 1 in 
-  assert_bool([] = S8BT.find_gt btree key1);
+  assert_bool([] = S8BT.find_gt btree key1 max);
 
   let btree = insert_l btree 1 in 
-  assert_bool([] = S8BT.find_gt btree key1);
+  assert_bool([] = S8BT.find_gt btree key1 max);
 
   let btree = insert_l btree 2 in 
   let key2, val2 = make_test_key_val 2 in 
-  assert_bool([val2] = S8BT.find_gt btree key1);
+  assert_bool([val2] = S8BT.find_gt btree key1 max);
 
   let btree = insert_l btree 3 in 
   let key3, val3 = make_test_key_val 3 in 
-  assert_bool(val2::val3::[] = S8BT.find_gt btree key1); 
+  assert_bool(val2::val3::[] = S8BT.find_gt btree key1 max); 
 
   let btree = insert_l btree 4 in 
   let key4, val4 = make_test_key_val 4 in 
-  assert_bool(val2::val3::val4::[] = S8BT.find_gt btree key1); 
+  assert_bool(val2::val3::val4::[] = S8BT.find_gt btree key1 max); 
 
   (* With the 5th value the leaf containing [3;4] has split 
    * and the tree has now the following structure;
@@ -357,12 +358,11 @@ let () =
   
   let btree = insert_l btree 5 in 
   let key5, val5 = make_test_key_val 5 in 
-  assert_bool(val2::val3::[] = S8BT.find_gt btree key1); 
-  assert_bool(val3::[]       = S8BT.find_gt btree key2); 
-  assert_bool(val4::val5::[] = S8BT.find_gt btree key3);
-  assert_bool(val5::[]       = S8BT.find_gt btree key4);
-  assert_bool([]             = S8BT.find_gt btree key5);
-
+  assert_bool(val2::val3::val4::val5::[] = S8BT.find_gt btree key1 max); 
+  assert_bool(val3::val4::val5::[]       = S8BT.find_gt btree key2 max); 
+  assert_bool(val4::val5::[] = S8BT.find_gt btree key3 max);
+  assert_bool(val5::[]       = S8BT.find_gt btree key4 max);
+  assert_bool([]             = S8BT.find_gt btree key5 max);
   ()
 
 let run_insert_find_gt_test ~m ~l () = 
@@ -381,14 +381,50 @@ let run_insert_find_gt_test ~m ~l () =
   
   for i = min to max - 1 do 
     let k, v = make_test_key_val i in 
-    match S8BT.find_gt btree k with
+    match S8BT.find_gt btree k 1 with
     | v'::_ when v' > v -> () 
     | _ -> assert(false) 
   done; 
 
+  (* 
+   * Make sure that no values is returned if we search for the 
+   * max value
+   *)
+
   let k, _ = make_test_key_val max in 
-  begin match S8BT.find_gt btree k with
+  begin match S8BT.find_gt btree k 1_000 with
   | [] -> ()
+  | _ -> assert(false)
+  end;
+
+  let sorted_l = 
+    l 
+    |> List.map (fun i -> make_test_key_val i) 
+    |> List.sort_uniq (fun (x, _) (y, _) -> String8.compare x y) 
+    |> List.map snd 
+  in
+  
+  let k, _ = make_test_key_val (min - 1) in 
+  begin match S8BT.find_gt btree k (List.length sorted_l) with
+  | l' when l' = sorted_l -> () 
+  | _ -> assert(false)
+  end;
+ 
+  (* 
+   * Make sure that the right number of values is returned 
+   *)
+
+  let sorted_l =
+    (* get the first half of the list *)
+    let rec aux l = function
+      | 0 -> []
+      | i -> (List.hd l) :: (aux (List.tl l) (i - 1)) 
+    in 
+    aux sorted_l (List.length sorted_l / 2) 
+  in  
+  
+  begin match S8BT.find_gt btree k (List.length sorted_l) with
+  | l' when l' = sorted_l -> () 
   | _ -> assert(false)
   end
 

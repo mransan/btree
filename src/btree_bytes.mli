@@ -15,7 +15,7 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) : sig
 
   val find : t -> Key.t -> Val.t option
 
-  val find_gt : t -> Key.t -> Val.t list 
+  val find_gt : t -> Key.t -> int -> Val.t list 
 
   val debug : t -> unit 
 
