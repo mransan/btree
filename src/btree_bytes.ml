@@ -153,6 +153,13 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
       (* ignore storage since we know that storage should not be modified 
        * by a find operation *)
     res 
+  
+  let iter ({storage ; _} as t) f = 
+    let storage', () = do_res storage @@ Internal.iter (node_on_disk t) f in 
+    assert(storage == storage');
+      (* ignore storage since we know that storage should not be modified 
+       * by a find operation *)
+    () 
 
   module Stats = struct 
 

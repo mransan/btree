@@ -244,4 +244,12 @@ module Make (Key:Key_sig) (Val:Val_sig) : sig
   (** [debug root_node] pretty-prints to stdout the B-Tree starting at
       [root_node] *)
 
+  (** {2 Iteration} *)
+
+  type iter_res = unit res 
+
+  val iter : t -> (Val.t -> unit) -> iter_res 
+  (** [iter root_node f] iterates over the B-Tree and applies [f] for each value 
+      in the tree.  *)
+
 end (* Make *)

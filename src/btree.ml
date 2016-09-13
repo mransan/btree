@@ -709,4 +709,44 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     )
 
   let debug t = debug (node_of_t t)
+
+  type iter_res = unit res 
+
+  let rec iter node f =
+    res_read_data (node_block node ()) (fun bytes -> 
+      iter_as_byte (make_as_bytes ~on_disk:node ~bytes ()) f
+    )  
+
+  and iter_as_byte node f = 
+    let { vals; subs; k; on_disk = {m; _}; _}  = node in  
+
+    let is_leaf = is_leaf k in 
+    let nb_of_vals = nb_of_vals k in
+
+    if is_leaf
+    then 
+      let rec aux = function 
+        | i when i = nb_of_vals -> res_done () 
+        | i -> begin  
+          f (Vals.get vals i);
+          aux (i + 1) 
+        end
+      in 
+      aux 0 
+
+    else 
+      let rec aux = function 
+        | i when i = nb_of_vals -> 
+          iter (sub_node_at ~subs ~pos:i ~m ()) f  
+        | i -> 
+          iter (sub_node_at ~subs ~pos:i ~m ()) f
+          |> res_bind (fun () -> 
+            f (Vals.get vals i);
+            aux (i + 1)  
+          ) 
+      in
+      aux 0 
+
+  let iter t f = iter (node_of_t t) f  
+
 end (* Make *) 

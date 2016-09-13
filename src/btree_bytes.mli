@@ -19,6 +19,8 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) : sig
 
   val debug : t -> unit 
 
+  val iter : t -> (Val.t -> unit) -> unit
+
   module Stats : sig 
     val reset : t -> unit 
     val read_count : t -> int 

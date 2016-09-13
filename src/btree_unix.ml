@@ -81,4 +81,7 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
   let find ({fd; _} as t)key = 
     Internal.find (node_on_disk t) key |> do_res fd 
 
+  let iter ({fd; _} as t) f = 
+    Internal.iter (node_on_disk t) f |> do_res fd 
+
 end (* Make *) 
