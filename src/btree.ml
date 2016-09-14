@@ -1,44 +1,4 @@
-(** Utility module to encode integer value with little endian 32 bit 
-    encoding.
-
-    It also implements the [Fixed_size_sig] module signature which is 
-    later defined.
- *)
-module Int = struct
-  let byte pos bytes = 
-    int_of_char (Bytes.unsafe_get bytes pos)
-  
-  type t = int
-
-  let length = 4
-
-  let to_string = string_of_int 
-  
-  let of_bytes bytes pos =
-    let b1 = byte (pos + 0) bytes in
-    let b2 = byte (pos + 1) bytes in
-    let b3 = byte (pos + 2) bytes in
-    let b4 = byte (pos + 3) bytes in
-    Int32.(to_int @@ add (shift_left (of_int b4) 24)
-           (add (shift_left (of_int b3) 16)
-            (add (shift_left (of_int b2) 8)
-             (of_int b1))))
-
-  let to_bytes i bytes pos =
-    let i = Int32.of_int i in
-    Bytes.unsafe_set 
-        bytes (pos + 0) 
-        (char_of_int Int32.(to_int (logand 0xffl i)));
-    Bytes.unsafe_set 
-        bytes (pos + 1) 
-        (char_of_int Int32.(to_int (logand 0xffl (shift_right i 8))));
-    Bytes.unsafe_set 
-        bytes (pos + 2) 
-        (char_of_int Int32.(to_int (logand 0xffl (shift_right i 16))));
-    Bytes.unsafe_set 
-        bytes (pos + 3) 
-        (char_of_int Int32.(to_int (logand 0xffl (shift_right i 24))))
-end 
+module Int = Int64_encoding 
 
 module type Fixed_size_sig = sig 
   type t 
