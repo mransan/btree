@@ -9,30 +9,9 @@ let print_string_list l =
   Printf.printf "]"
 
 
-module String8 = struct 
-  type t = string 
-
+module String8 = Encoding.MakeFixedLengthString(struct 
   let length = 8 
-
-  let of_bytes_counter = ref 0 
-
-  let compare_counter = ref 0 
-
-  let of_bytes bytes pos = 
-    incr of_bytes_counter;
-    Bytes.sub_string bytes pos length
-
-  let to_bytes s bytes pos = 
-    assert(String.length s = length); 
-    Bytes.blit_string s 0 bytes pos length
-
-  let compare (l:string) (r:string) = 
-    incr compare_counter; 
-    Pervasives.compare l r  
-
-  let to_string x = x 
-
-end 
+end)
   
 module S8BT = Btree_bytes.Make(String8)(String8)
 

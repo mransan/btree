@@ -92,13 +92,13 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
     (storage, offset) 
 
   let rec do_res storage = function
-    | Internal.Res_done x -> (storage, x)  
-    | Internal.Res_read_data (block, k) -> 
+    | Btree.Res_done x -> (storage, x)  
+    | Btree.Res_read_data (block, k) -> 
       do_read_op storage block 
       |> k 
       |> do_res storage  
 
-    | Internal.Res_allocate (block_length, k) ->
+    | Btree.Res_allocate (block_length, k) ->
       let storage, offset = do_allocate storage block_length in 
       k offset |> do_res storage 
   

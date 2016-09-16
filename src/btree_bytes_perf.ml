@@ -4,37 +4,15 @@ let make_test_key_val7 s =
   (Printf.sprintf "0%s" s, Printf.sprintf "%s0" s) 
 
 
-module String8 = struct 
-  type t = string 
-
-  let of_bytes_counter = ref 0 
-  let compare_counter = ref 0 
-
-  let length = 8 
-
-  let of_bytes bytes pos = 
-    incr of_bytes_counter;
-    Bytes.sub_string bytes pos length
-
-  let to_bytes s bytes pos = 
-    assert(String.length s = length); 
-    Bytes.blit_string s 0 bytes pos length
-
-  let compare (l:string) (r:string) = 
-    incr compare_counter; 
-    Pervasives.compare l r  
-
-  let to_string x = x 
-
-end 
+module String8 = Encoding.MakeFixedLengthString(struct 
+  let length = 8
+end)
 
 module S8BT = Btree_bytes.Make(String8)(String8) 
 
 let run_random_inserts ~m ~nb_of_inserts () = 
 
-
-  String8.of_bytes_counter := 0; 
-  String8.compare_counter := 0;
+  String8.Stats.reset ();
   
   let make_test_key_val i = 
     let s = Printf.sprintf "%07i" i in 
@@ -91,7 +69,7 @@ let run_random_inserts ~m ~nb_of_inserts () =
     "time insert: %08.4f, time find: %08.4f\n"
     )  
     m (S8BT.Stats.node_length t) (S8BT.Stats.storage_length t)
-    !String8.of_bytes_counter !String8.compare_counter 
+    (String8.Stats.of_bytes_count ()) (String8.Stats.compare_count())
     (S8BT.Stats.write_count t) (S8BT.Stats.read_count t) 
     (t1 -. t0) (t2 -. t1);; 
 

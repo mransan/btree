@@ -127,6 +127,20 @@ type write_op = {
   bytes : bytes;
 }
 (** Write operation : write [bytes] starting at [offset] in the file *)
+  
+type 'a res = 
+  | Res_done of 'a 
+    (** Computation is done and the result returned *)
+  | Res_read_data of block * 'a res_read_data_k 
+    (** Reading a block of data is required *)
+  | Res_allocate of block_length * 'a res_allocate_k 
+    (** Allocating a new block of data is required *)
+
+and 'a res_read_data_k = bytes -> 'a res 
+  (** Continuation function after reading a block of data *)
+
+and 'a res_allocate_k = file_offset -> 'a res 
+  (** Continuation function after allocating a block of data *)
 
 module Make (Key:Key_sig) (Val:Val_sig) : sig 
 
@@ -135,19 +149,6 @@ module Make (Key:Key_sig) (Val:Val_sig) : sig
     m : int;
   }
 
-  type 'a res = 
-    | Res_done of 'a 
-      (** Computation is done and the result returned *)
-    | Res_read_data of block * 'a res_read_data_k 
-      (** Reading a block of data is required *)
-    | Res_allocate of block_length * 'a res_allocate_k 
-      (** Allocating a new block of data is required *)
-
-  and 'a res_read_data_k = bytes -> 'a res 
-    (** Continuation function after reading a block of data *)
-
-  and 'a res_allocate_k = file_offset -> 'a res 
-    (** Continuation function after allocating a block of data *)
 
   (** A Binary tree is defined by the file offset of the root
       node as well as [m] the maximum number of subtree in a node 
@@ -251,5 +252,9 @@ module Make (Key:Key_sig) (Val:Val_sig) : sig
   val iter : t -> (Val.t -> unit) -> iter_res 
   (** [iter root_node f] iterates over the B-Tree and applies [f] for each value 
       in the tree.  *)
+
+  type last_res = ((Key.t * Val.t) option) res 
+
+  val last : t -> last_res
 
 end (* Make *)

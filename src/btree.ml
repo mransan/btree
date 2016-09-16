@@ -1,4 +1,4 @@
-module Int = Int64_encoding 
+module Int = Encoding.Int64
 
 module type Fixed_size_sig = sig 
   type t 
@@ -133,6 +133,37 @@ module FS_array(FS:Fixed_size_sig) =  struct
     ret  
 
 end 
+  
+type 'a res = 
+  | Res_done of 'a 
+  | Res_read_data of block *'a res_read_data_k 
+  | Res_allocate of block_length * 'a res_allocate_k 
+
+and 'a res_read_data_k = bytes -> 'a res 
+
+and 'a res_allocate_k = file_offset -> 'a res 
+
+let res_done x = Res_done x
+let res_read_data block k = Res_read_data (block, k) 
+let res_allocate block_length k = Res_allocate (block_length, k) 
+
+let rec res_bind f = function
+  | Res_done x -> f x 
+
+  | Res_read_data (block, k) -> 
+    Res_read_data (block, fun bytes -> k bytes |> res_bind f) 
+
+  | Res_allocate (length, k) -> 
+    Res_allocate (length, fun offset -> k offset |> res_bind f)
+
+let rec res_map f = function
+  | Res_done x -> Res_done (f x) 
+
+  | Res_read_data (block, k) -> 
+    Res_read_data (block, fun bytes -> k bytes |> res_map f) 
+
+  | Res_allocate (length, k) -> 
+    Res_allocate (length, fun offset -> k offset |> res_map f)
 
 module Make (Key:Key_sig) (Val:Val_sig) = struct  
 
@@ -140,36 +171,6 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
   module Vals = FS_array(Val)
   module Ints = FS_array(Int)
   
-  type 'a res = 
-    | Res_done of 'a 
-    | Res_read_data of block *'a res_read_data_k 
-    | Res_allocate of block_length * 'a res_allocate_k 
-
-  and 'a res_read_data_k = bytes -> 'a res 
-
-  and 'a res_allocate_k = file_offset -> 'a res 
-
-  let res_done x = Res_done x
-  let res_read_data block k = Res_read_data (block, k) 
-  let res_allocate block_length k = Res_allocate (block_length, k) 
-  
-  let rec res_bind f = function
-    | Res_done x -> f x 
-
-    | Res_read_data (block, k) -> 
-      Res_read_data (block, fun bytes -> k bytes |> res_bind f) 
-
-    | Res_allocate (length, k) -> 
-      Res_allocate (length, fun offset -> k offset |> res_bind f)
-
-  let rec res_map f = function
-    | Res_done x -> Res_done (f x) 
-
-    | Res_read_data (block, k) -> 
-      Res_read_data (block, fun bytes -> k bytes |> res_map f) 
-
-    | Res_allocate (length, k) -> 
-      Res_allocate (length, fun offset -> k offset |> res_map f)
 
   type t = {
     root_file_offset : file_offset;
@@ -708,5 +709,28 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       aux 0 
 
   let iter t f = iter (node_of_t t) f  
+
+  type last_res = ((Key.t * Val.t) option) res 
+
+  let rec last ~is_root node = 
+    res_read_data (node_block node ()) (fun bytes -> 
+      last_as_byte ~is_root (make_as_bytes ~on_disk:node ~bytes ())
+    ) 
+
+  and last_as_byte ?is_root:(is_root = false) node = 
+    
+    let {keys; vals; subs; k; on_disk = {m; _ }; _ } = node in 
+
+    if is_root && k = 0 
+    then res_done None
+    else 
+      if is_leaf k 
+      then 
+        res_done @@ Some (Keys.get keys (nb_of_vals k - 1), Vals.get vals (nb_of_vals k - 1)) 
+      else 
+        let sub_node = sub_node_at ~subs ~pos:(nb_of_subs k - 1) ~m () in 
+        last ~is_root:false sub_node
+
+  let last t = last ~is_root:true (node_of_t t) 
 
 end (* Make *) 

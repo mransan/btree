@@ -1,24 +1,9 @@
 
-module String8 = struct 
-  type t = string 
-
+module String10 = Encoding.MakeFixedLengthString(struct
   let length = 10
+end) 
 
-  let of_bytes bytes pos = 
-    Bytes.sub_string bytes pos length
-
-  let to_bytes s bytes pos = 
-    assert(String.length s = length); 
-    Bytes.blit_string s 0 bytes pos length
-
-  let compare (l:string) (r:string) = 
-    Pervasives.compare l r  
-
-  let to_string x = x 
-
-end 
-
-module S8BT = Btree_unix.Make(String8)(String8) 
+module S8BT = Btree_unix.Make(String10)(String10) 
 
 let make_test_key_val i = 
   (Printf.sprintf "%010i" i, Printf.sprintf "%010i" i) 
