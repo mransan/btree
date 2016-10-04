@@ -42,14 +42,14 @@ test: build
 js: build
 	cd js/node_modules/btree && npm run build && time node src/btree_bytes_test.js  
 
-db: build
-	./db_test.native
+table: build
+	./table_test.native
 
 build:
 	$(OCB) btree_bytes_test.native
 	$(OCB) btree_bytes_perf.native
 	$(OCB) btree_unix_perf.native
-	$(OCB) db_test.native
+	$(OCB) table_test.native
 
 clean:
 	rm -f *.data
