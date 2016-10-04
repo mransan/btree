@@ -1,4 +1,6 @@
-let do_read_op fd {Btree.offset; length} = 
+module T = Types 
+
+let do_read_op fd {T.offset; length} = 
   ignore @@ Unix.lseek fd offset Unix.SEEK_SET; 
   let bytes = Bytes.create length in 
   begin match Unix.read fd bytes 0 length with
@@ -7,7 +9,7 @@ let do_read_op fd {Btree.offset; length} =
   end;
   bytes
 
-let do_write_op fd {Btree.offset; bytes; } = 
+let do_write_op fd {T.offset; bytes; } = 
   ignore @@ Unix.lseek fd offset Unix.SEEK_SET; 
   let length = Bytes.length bytes in 
   begin match Unix.write fd bytes 0 length with
@@ -18,7 +20,7 @@ let do_write_op fd {Btree.offset; bytes; } =
 let int_compare (x:int) (y:int) = Pervasives.compare x y 
 
 let do_write_ops fd write_ops = 
-  List.sort (fun {Btree.offset = lhs; _} {Btree.offset = rhs; _} -> 
+  List.sort (fun {T.offset = lhs; _} {T.offset = rhs; _} -> 
     int_compare lhs rhs
   ) write_ops
   |>  List.iter (fun write -> do_write_op fd write)
@@ -26,18 +28,29 @@ let do_write_ops fd write_ops =
 let do_allocate fd length = 
   let offset = Unix.lseek fd 0 Unix.SEEK_END in 
   let write_op = {
-    Btree.offset; 
+    T.offset; 
     bytes = Bytes.make length (char_of_int 0)
   } in 
   do_write_op fd write_op; 
   offset
 
+let do_append fd bytes = 
+  let offset = Unix.lseek fd 0 Unix.SEEK_END in 
+  let length = Bytes.length bytes in 
+  begin match Unix.write fd bytes 0 length with
+  | nb_of_bytes when nb_of_bytes = length -> () 
+  | _ -> failwith "write incomplete"
+  end;
+  offset
+
 let rec do_res fd = function  
-  | Btree.Res_done x -> x 
-  | Btree.Res_read_data (block, k) -> 
+  | T.Res_done x -> x 
+  | T.Res_read_data (block, k) -> 
     do_read_op fd block |> k |> do_res fd 
-  | Btree.Res_allocate (block_length, k) ->
+  | T.Res_allocate (block_length, k) ->
     do_allocate fd block_length |> k  |>  do_res fd 
+  | T.Res_append (bytes, k) -> 
+    do_append fd bytes |> k |> do_res fd 
 
 module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct 
 

@@ -34,37 +34,68 @@ let next_person =
     let phone_number = "9179298071" in 
     Db_test_pb.default_person ~first_name ~last_name ~phone_number ()
 
+
+type db = {
+  db : Db.db;
+  fd : Unix.file_descr;
+}
+
+let open_empty_db file_name = 
+  let fd = Unix.openfile file_name [Unix.O_RDWR; Unix.O_CREAT] 0o640 in 
+  let db, write_ops = Db.open_empty_db file_name in 
+  Btree_unix.do_write_ops fd write_ops;
+  {db;fd;}
+
+let open_from_file file_name =  
+  let fd = Unix.openfile file_name [Unix.O_RDWR; Unix.O_CREAT] 0o640 in 
+  let db = Btree_unix.do_res fd @@ Db.open_from_file file_name in 
+  {db;fd;}
+
+let insert {db;fd} record = 
+  Db.insert db record
+  |> Btree_unix.do_res fd 
+  |> Btree_unix.do_write_ops fd  
+
+let close {db;fd} = 
+  Db.close db;
+  Unix.close fd  
+
+let to_string {db; _ } = 
+  Db.to_string db
+
+let debug {db; fd } = 
+  Btree_unix.do_res fd (Db.debug db) 
+
 let () = 
   let t0 = Unix.gettimeofday () in
-  let n = 10_000 in 
+  let n = 100_000 in 
 
   let rec aux db = function
-    | 0 -> Db.close db;
+    | 0 -> close db;
     | i -> 
-      
       let db = 
         if i mod 1_000 = 0 
         then begin 
-          Db.close db; 
-          Db.open_from_file "db.data"
+          close db; 
+          open_from_file "db.data"
         end
         else db 
       in 
-      Db.insert db (next_person ()); 
+      insert db (next_person ()); 
       aux db (i - 1)
   in 
-  aux (Db.open_empty_db "db.data") n;
+  aux (open_empty_db "db.data") n;
 
   let t1 = Unix.gettimeofday () in 
   Printf.printf ">> rate: %f\n" @@ (float_of_int n) /. (t1 -. t0);
 
-  let db = Db.open_from_file "db.data" in 
-  print_endline @@ Db.to_string db;
-  Db.debug db;
+  let db = open_from_file "db.data" in 
+  print_endline @@ to_string db;
+  debug db;
   let t2 = Unix.gettimeofday () in 
   Printf.printf ">>  rate: %f\n" @@ (float_of_int n) /. (t2 -. t1);
-  Db.close db;
-  let db = Db.open_from_file "db.data" in 
-  print_endline @@ Db.to_string db;
-  Db.close db;
+  close db;
+  let db = open_from_file "db.data" in 
+  print_endline @@ to_string db;
+  close db;
   ()
