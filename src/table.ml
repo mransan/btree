@@ -157,17 +157,17 @@ module Make(Table:Record_sig) = struct
     let record_bytes = Table.to_bytes record in 
     let record_length = Bytes.length record_bytes in 
 
-    let full_record_bytes = 
-      Bytes.create (Encoding.Int64.length + record_length)
-    in 
+    let full_record_length = Encoding.Int64.length + record_length in 
+    let full_record_bytes = Bytes.create full_record_length in 
 
-    (* first encode the length of the record, then the record itself *)
+    (* first encode the length of the record... *) 
     Encoding.Int64.to_bytes record_length full_record_bytes 0; 
+    (* ... then the record itself *)
     Bytes.blit record_bytes 0 
         full_record_bytes Encoding.Int64.length record_length;  
   
-    T.res_append full_record_bytes (fun record_offset -> 
-      T.res_done record_offset
+    T.res_allocate full_record_length (fun record_offset -> 
+      T.res_done T.{offset = record_offset; bytes = full_record_bytes}
     ) 
 
   let read_record record_offset = 
@@ -194,16 +194,21 @@ module Make(Table:Record_sig) = struct
 
     let metadata = db.metadata in
   
-    append_record record |> T.res_bind (fun record_offset ->
+    append_record record |> T.res_bind (fun record_write_op  ->
+
+      let {T.offset = record_offset; _ } = record_write_op in 
+
+      let write_ops = [record_write_op] in
 
       let btree = index0_btree_of_metadata metadata in 
       Index0.append btree (Table.index0 record) record_offset
       |> T.res_map (fun append_res ->
         match append_res with
-        | Index0.Insert_res_done (None, write_ops) ->  (false, write_ops) 
-        | Index0.Insert_res_done (Some record_id_bro, write_ops) -> 
+        | Index0.Insert_res_done (None, index0_write_ops) ->  
+          (false, write_ops @ index0_write_ops) 
+        | Index0.Insert_res_done (Some record_id_bro, index0_write_ops) -> 
           MetaData.set_btree_root_offset metadata 0 record_id_bro; 
-          (true, write_ops)
+          (true, write_ops @ index0_write_ops)
         | _ -> assert(false)
       )
       |> T.res_bind (fun (write_meta_data, write_ops)-> 
@@ -211,11 +216,11 @@ module Make(Table:Record_sig) = struct
         Index1.insert btree (Table.index1 record) record_offset
         |> T.res_map (fun insert_res -> 
           match insert_res with
-          | Index1.Insert_res_done (None, write_ops') ->  
-            (write_meta_data, write_ops' @ write_ops) 
-          | Index1.Insert_res_done (Some index1_bro, write_ops') -> 
+          | Index1.Insert_res_done (None, index1_write_ops) ->  
+            (write_meta_data, index1_write_ops @ write_ops) 
+          | Index1.Insert_res_done (Some index1_bro, index1_write_ops) -> 
             MetaData.set_btree_root_offset metadata 1 index1_bro;
-            (true, write_ops' @ write_ops)
+            (true, index1_write_ops @ write_ops)
           | _ -> assert(false)
         )
       )
@@ -243,13 +248,10 @@ module Make(Table:Record_sig) = struct
          | record_offset :: tl -> 
            read_record record_offset
            |> T.res_bind (fun record -> 
-               (*
              Printf.printf 
-                 ("Record Index: %010i -> " ^^ 
-                  "Record Offset: %010i -> " ^^ 
+                 ("Record Offset: %010i -> " ^^ 
                   "Record: %s\n")
-                 record_id record_offset (Table.to_string record); 
-             *)
+                 record_offset (Table.to_string record); 
              let _ = record in 
              aux tl 
            )

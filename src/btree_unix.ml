@@ -34,23 +34,12 @@ let do_allocate fd length =
   do_write_op fd write_op; 
   offset
 
-let do_append fd bytes = 
-  let offset = Unix.lseek fd 0 Unix.SEEK_END in 
-  let length = Bytes.length bytes in 
-  begin match Unix.write fd bytes 0 length with
-  | nb_of_bytes when nb_of_bytes = length -> () 
-  | _ -> failwith "write incomplete"
-  end;
-  offset
-
 let rec do_res fd = function  
   | T.Res_done x -> x 
   | T.Res_read_data (block, k) -> 
     do_read_op fd block |> k |> do_res fd 
   | T.Res_allocate (block_length, k) ->
     do_allocate fd block_length |> k  |>  do_res fd 
-  | T.Res_append (bytes, k) -> 
-    do_append fd bytes |> k |> do_res fd 
 
 module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct 
 

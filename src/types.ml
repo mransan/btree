@@ -39,18 +39,14 @@ type 'a res =
   | Res_done of 'a 
   | Res_read_data of block * 'a res_read_data_k 
   | Res_allocate of block_length * 'a res_allocate_k 
-  | Res_append of bytes * 'a res_append_k 
 
 and 'a res_read_data_k = bytes -> 'a res 
 
 and 'a res_allocate_k = file_offset -> 'a res 
 
-and 'a res_append_k = file_offset -> 'a res 
-
 let res_done x = Res_done x
 let res_read_data block k = Res_read_data (block, k) 
 let res_allocate block_length k = Res_allocate (block_length, k) 
-let res_append bytes k = Res_append (bytes, k) 
 
 let rec res_bind f = function
   | Res_done x -> f x 
@@ -61,9 +57,6 @@ let rec res_bind f = function
   | Res_allocate (length, k) -> 
     Res_allocate (length, fun offset -> k offset |> res_bind f)
   
-  | Res_append (bytes, k) -> 
-    Res_append (bytes, fun offset -> k offset |> res_bind f)
-
 let rec res_map f = function
   | Res_done x -> Res_done (f x) 
 
@@ -72,6 +65,3 @@ let rec res_map f = function
 
   | Res_allocate (length, k) -> 
     Res_allocate (length, fun offset -> k offset |> res_map f)
-  
-  | Res_append (bytes, k) -> 
-    Res_append (bytes, fun offset -> k offset |> res_map f)

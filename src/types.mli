@@ -85,8 +85,6 @@ type 'a res =
     (** Reading a block of data is required *)
   | Res_allocate of block_length * 'a res_allocate_k 
     (** Allocating a new block of data is required *)
-  | Res_append of bytes * 'a res_append_k 
-
 
 and 'a res_read_data_k = bytes -> 'a res 
   (** Continuation function after reading a block of data *)
@@ -94,15 +92,11 @@ and 'a res_read_data_k = bytes -> 'a res
 and 'a res_allocate_k = file_offset -> 'a res 
   (** Continuation function after allocating a block of data *)
 
-and 'a res_append_k = file_offset -> 'a res 
-
 val res_done : 'a -> 'a res 
 
 val res_read_data : block -> 'a res_read_data_k -> 'a res 
 
 val res_allocate : block_length -> 'a res_allocate_k -> 'a res 
-
-val res_append : bytes -> 'a res_append_k -> 'a res 
 
 val res_bind : ('a -> 'b res) -> 'a res -> 'b res 
 
