@@ -1,60 +1,30 @@
+module Encoding = Dbtlk_encoding
 module Int = Encoding.Int64
-
-module type Fixed_size_sig = sig 
-  type t 
-  val length : int 
-  val to_bytes : t -> bytes -> int -> unit  
-  val of_bytes : bytes -> int -> t 
-  val to_string : t -> string 
-end 
-
-module type Comparable_sig = sig 
-  type t 
-  val compare : t -> t -> int
-end 
+module T   = Dbtlk_types
 
 module type Key_sig = sig
   type t 
-  include Fixed_size_sig with type t := t 
-  include Comparable_sig with type t := t 
+  include T.Fixed_size_sig with type t := t 
+  include T.Comparable_sig with type t := t 
+  include T.Debug_sig with type t := t 
 end 
 
 module type Val_sig = sig 
   type t 
-  include Fixed_size_sig with type t := t 
+  include T.Fixed_size_sig with type t := t 
 end 
 
-type file_offset = int
+let make_block ~offset ~length () = T.{offset; length; } 
 
-type block_length = int 
-
-(** File block *)
-type block = {
-  offset: file_offset; 
-  length: block_length;
-}
-
-let make_block ~offset ~length () = {offset; length; } 
-
-let string_of_block {offset; length} = 
-  Printf.sprintf "{offset: %i, length: %i}" offset length
-
-type write_op = {
-  offset : file_offset; 
-  bytes : bytes;
-} 
-
-let make_write_op ~offset ~bytes () = {offset; bytes} 
-
-type read_op = block 
+let make_write_op ~offset ~bytes () = T.{offset; bytes} 
 
 (** This module provide similar interface as [Array] module for a 
     [bytes] array containing serialized [Fixed_size_sig] values. 
   *)
-module FS_array(FS:Fixed_size_sig) =  struct 
+module FS_array(FS:T.Fixed_size_sig) =  struct 
 
   type t = {
-    offset: file_offset;  (* where in [byte] does the array starts *) 
+    offset: T.file_offset;  (* where in [byte] does the array starts *) 
     bytes: bytes; (* contains [Fixed_size_sig] values starting at [offset] *) 
   } 
 
@@ -134,36 +104,6 @@ module FS_array(FS:Fixed_size_sig) =  struct
 
 end 
   
-type 'a res = 
-  | Res_done of 'a 
-  | Res_read_data of block *'a res_read_data_k 
-  | Res_allocate of block_length * 'a res_allocate_k 
-
-and 'a res_read_data_k = bytes -> 'a res 
-
-and 'a res_allocate_k = file_offset -> 'a res 
-
-let res_done x = Res_done x
-let res_read_data block k = Res_read_data (block, k) 
-let res_allocate block_length k = Res_allocate (block_length, k) 
-
-let rec res_bind f = function
-  | Res_done x -> f x 
-
-  | Res_read_data (block, k) -> 
-    Res_read_data (block, fun bytes -> k bytes |> res_bind f) 
-
-  | Res_allocate (length, k) -> 
-    Res_allocate (length, fun offset -> k offset |> res_bind f)
-
-let rec res_map f = function
-  | Res_done x -> Res_done (f x) 
-
-  | Res_read_data (block, k) -> 
-    Res_read_data (block, fun bytes -> k bytes |> res_map f) 
-
-  | Res_allocate (length, k) -> 
-    Res_allocate (length, fun offset -> k offset |> res_map f)
 
 module Make (Key:Key_sig) (Val:Val_sig) = struct  
 
@@ -173,7 +113,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
   
 
   type t = {
-    root_file_offset : file_offset;
+    root_file_offset : T.file_offset;
     m : int;
   }
 
@@ -278,13 +218,13 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     make_write_op ~offset ~bytes ()
 
   type insert_res_data = 
-    | Insert_res_done of (file_offset option * write_op list)  
+    | Insert_res_done of (T.file_offset option * T.write_op list)  
       (** [Insert_res_done (Some root_offset, write_ops], the key/value was 
           successfully inserted. [root_offset] is the new root offset of the 
           tree which should then be used in subsequent inserts/find/debug while 
           [write_ops] are the write operation necessary for the inserts to 
           take effect. *)
-    | Insert_res_node_split of (Key.t * Val.t * int * write_op list) 
+    | Insert_res_node_split of (Key.t * Val.t * int * T.write_op list) 
       (** Internal, should never be returned *)
 
   let insert_res_done ?root_file_offset ?write_ops:(write_ops = []) () = 
@@ -293,7 +233,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
   let insert_res_node_split k v offset write_ops = 
     Insert_res_node_split (k, v, offset,write_ops)
 
-  type insert_res = insert_res_data res 
+  type insert_res = insert_res_data T.res 
   
   (* returns the position index in which a new key/value should 
    * be inserted. *)
@@ -341,7 +281,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
   let make_new_root_node left_node right_node_offset key value write_ops = 
     let { on_disk = {offset; m; }; _} =  left_node in 
     let length = node_length_of_m m in  
-    res_allocate length (fun root_file_offset -> 
+    T.res_allocate length (fun root_file_offset -> 
       let bytes = Bytes.create length in 
       let k = 1 in 
       let keys, vals, subs = keys_vals_subs ~m ~bytes () in 
@@ -356,7 +296,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
         make_write_op ~offset:root_file_offset ~bytes () 
       in 
       let write_ops = new_root_write_op :: write_ops in 
-      res_done @@ insert_res_done ~root_file_offset ~write_ops ()
+      T.res_done @@ insert_res_done ~root_file_offset ~write_ops ()
     )
 
   let insert_at_pos 
@@ -385,7 +325,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
         (* the number of values is split in half between the 
          * current node and the newly allocated [right_node] *)
 
-      res_allocate (node_length_of_m m) (fun right_node_offset -> 
+      T.res_allocate (node_length_of_m m) (fun right_node_offset -> 
 
         Int.to_bytes k bytes 0;
 
@@ -439,7 +379,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
           make_new_root_node 
               node right_node_offset median_key median_value write_ops 
         else 
-          res_done @@ insert_res_node_split 
+          T.res_done @@ insert_res_node_split 
               median_key median_value right_node_offset write_ops
       ) 
     end
@@ -449,11 +389,11 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       Vals.insert_shift_right vals pos (nb_of_vals k) value;
       Ints.insert_shift_right subs (pos + 1) (nb_of_subs k) right_sub; 
       Int.to_bytes (incr_k k) bytes 0; 
-      res_done @@ insert_res_done ~write_ops:(node_write_op node :: write_ops) ()
+      T.res_done @@ insert_res_done ~write_ops:(node_write_op node :: write_ops) ()
     end
 
   let rec insert ?is_root (node:node_on_disk) key value = 
-    res_read_data (node_block node ()) (fun bytes -> 
+    T.res_read_data (node_block node ()) (fun bytes -> 
       let node =  make_as_bytes ~on_disk:node ~bytes () in 
       insert_as_bytes ?is_root node key value
     ) 
@@ -472,7 +412,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
       Vals.set vals pos value; 
       Keys.set keys pos key;
       let write_op = make_write_op ~offset ~bytes () in 
-      res_done @@ insert_res_done ~write_ops:[write_op] ()
+      T.res_done @@ insert_res_done ~write_ops:[write_op] ()
     end
     | `Insert_at pos -> begin 
       if is_leaf k 
@@ -480,9 +420,9 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
         insert_at_pos ~is_root ~node ~pos ~key ~value () 
       else 
         insert ~is_root:false (sub_node_at ~subs ~pos ~m ()) key value 
-        |> res_bind (fun insert_res -> 
+        |> T.res_bind (fun insert_res -> 
           match insert_res with 
-          | Insert_res_done _ -> res_done insert_res 
+          | Insert_res_done _ -> T.res_done insert_res 
           | Insert_res_node_split (key, value, right_sub, write_ops) -> 
             insert_at_pos 
                 ~is_root ~node ~pos ~key ~value ~right_sub ~write_ops ()  
@@ -492,7 +432,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
   let insert t key value = insert (node_of_t t) key value 
 
   let rec append ?is_root (node:node_on_disk) key value = 
-    res_read_data (node_block node ()) (fun bytes -> 
+    T.res_read_data (node_block node ()) (fun bytes -> 
       let node =  make_as_bytes ~on_disk:node ~bytes () in 
       append_as_bytes ?is_root node key value
     ) 
@@ -509,9 +449,9 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     else 
       let sub_node = make_on_disk ~offset:(Ints.get subs pos) ~m () in 
       append ~is_root:false sub_node key value 
-      |> res_bind (fun insert_res -> 
+      |> T.res_bind (fun insert_res -> 
         match insert_res with 
-        | Insert_res_done _ -> res_done insert_res 
+        | Insert_res_done _ -> T.res_done insert_res 
         | Insert_res_node_split (key, value, right_sub, write_ops) -> 
           insert_at_pos 
               ~is_root ~node ~pos ~key ~value ~right_sub ~write_ops ()  
@@ -521,26 +461,26 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
   type find_res_data = Val.t option  
 
-  type find_res = find_res_data res
+  type find_res = find_res_data T.res
 
   let rec find (node:node_on_disk) key = 
-    res_read_data (node_block node ()) (fun bytes -> 
+    T.res_read_data (node_block node ()) (fun bytes -> 
       find_as_bytes (make_as_bytes ~on_disk:node ~bytes ()) key
     ) 
     
   and find_as_bytes node key = 
     let {k; vals; subs; on_disk = {m; _}; _ } = node in 
     match find_key_insert_position node key with
-    | `Update_at i -> res_done (Some (Vals.get vals i))
+    | `Update_at i -> T.res_done (Some (Vals.get vals i))
     | `Insert_at i -> 
       if is_leaf k 
-      then res_done None 
+      then T.res_done None 
       else 
         let sub_offset = Ints.get subs i in 
         let sub_node = make_on_disk ~offset:sub_offset ~m () in 
         find sub_node key
 
-  type find_gt_res = Val.t list res  
+  type find_gt_res = Val.t list T.res  
 
   type counter = {
     mutable i : int ; 
@@ -578,7 +518,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     aux out_vals pos 
 
   let rec find_gt (node:node_on_disk) out_vals counter key : find_gt_res = 
-    res_read_data (node_block node ()) (fun bytes -> 
+    T.res_read_data (node_block node ()) (fun bytes -> 
       find_gt_as_bytes (make_as_bytes ~on_disk:node ~bytes ()) out_vals counter key
     ) 
 
@@ -591,12 +531,12 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     in 
     if is_leaf k 
     then 
-      res_done (collect_gt out_vals counter vals pos (nb_of_vals k)) 
+      T.res_done (collect_gt out_vals counter vals pos (nb_of_vals k)) 
     else 
 
       let rec aux out_vals counter pos = 
         let sub_node = sub_node_at ~subs ~pos ~m () in 
-        find_gt sub_node out_vals counter key |> res_bind (function
+        find_gt sub_node out_vals counter key |> T.res_bind (function
           | [] as out_vals 
           | out_vals when not (counter_is_max_reached counter) -> 
             (* If no values was found (or not enough values are collected 
@@ -609,31 +549,31 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
              * node (and so forth until the root).  
              *)
             if pos = nb_of_subs k - 1
-            then res_done out_vals 
+            then T.res_done out_vals 
             else begin 
               let out_vals = (Vals.get vals pos) :: out_vals in 
               counter_incr counter; 
               aux out_vals counter (pos + 1) 
             end
-          | out_vals -> res_done out_vals 
+          | out_vals -> T.res_done out_vals 
         ) 
       in 
       aux out_vals counter pos 
 
   let find_gt t key max = 
     let counter = counter_make max in 
-    find_gt (node_of_t t) [] counter key |> res_map List.rev 
+    find_gt (node_of_t t) [] counter key |> T.res_map List.rev 
 
   let find t key = find (node_of_t t) key 
   
-  type debug_res = unit res  
+  type debug_res = unit T.res  
 
   let indent_string n = String.make n ' ' 
     (* add memoization *)
 
   let rec debug ?indent:(indent = 0) node = 
     let node_block = node_block node () in 
-    res_read_data node_block (fun bytes ->
+    T.res_read_data node_block (fun bytes ->
 
       let {
         on_disk = {offset = _ ; m}; 
@@ -650,15 +590,15 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
           Printf.printf "%s  +-- %s\n" 
               (indent_string indent) (Key.to_string key)
         ) keys_values;
-        res_done ()
+        T.res_done ()
       end
       else 
         let rec aux i = 
           let sub = make_on_disk ~offset:(Ints.get subs i) ~m () in 
           debug ~indent:(indent + 1) sub
-          |> res_bind (fun () ->
+          |> T.res_bind (fun () ->
             if i = nb_of_vals 
-            then res_done ()
+            then T.res_done ()
             else begin  
               Printf.printf "%s|- %s\n" 
                   (indent_string indent) (Keys.get keys i |> Key.to_string); 
@@ -671,10 +611,10 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
   let debug t = debug (node_of_t t)
 
-  type iter_res = unit res 
+  type iter_res = unit T.res 
 
   let rec iter node f =
-    res_read_data (node_block node ()) (fun bytes -> 
+    T.res_read_data (node_block node ()) (fun bytes -> 
       iter_as_byte (make_as_bytes ~on_disk:node ~bytes ()) f
     )  
 
@@ -687,7 +627,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     if is_leaf
     then 
       let rec aux = function 
-        | i when i = nb_of_vals -> res_done () 
+        | i when i = nb_of_vals -> T.res_done () 
         | i -> begin  
           f (Vals.get vals i);
           aux (i + 1) 
@@ -701,7 +641,7 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
           iter (sub_node_at ~subs ~pos:i ~m ()) f  
         | i -> 
           iter (sub_node_at ~subs ~pos:i ~m ()) f
-          |> res_bind (fun () -> 
+          |> T.res_bind (fun () -> 
             f (Vals.get vals i);
             aux (i + 1)  
           ) 
@@ -710,10 +650,10 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
 
   let iter t f = iter (node_of_t t) f  
 
-  type last_res = ((Key.t * Val.t) option) res 
+  type last_res = ((Key.t * Val.t) option) T.res 
 
   let rec last ~is_root node = 
-    res_read_data (node_block node ()) (fun bytes -> 
+    T.res_read_data (node_block node ()) (fun bytes -> 
       last_as_byte ~is_root (make_as_bytes ~on_disk:node ~bytes ())
     ) 
 
@@ -722,11 +662,11 @@ module Make (Key:Key_sig) (Val:Val_sig) = struct
     let {keys; vals; subs; k; on_disk = {m; _ }; _ } = node in 
 
     if is_root && k = 0 
-    then res_done None
+    then T.res_done None
     else 
       if is_leaf k 
       then 
-        res_done @@ Some (Keys.get keys (nb_of_vals k - 1), Vals.get vals (nb_of_vals k - 1)) 
+        T.res_done @@ Some (Keys.get keys (nb_of_vals k - 1), Vals.get vals (nb_of_vals k - 1)) 
       else 
         let sub_node = sub_node_at ~subs ~pos:(nb_of_subs k - 1) ~m () in 
         last ~is_root:false sub_node

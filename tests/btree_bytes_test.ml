@@ -1,3 +1,4 @@
+module Encoding = Dbtlk_encoding
 let test_type = `Fast
 
 (*  Helps in debugging 

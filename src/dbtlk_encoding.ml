@@ -1,26 +1,12 @@
 
 module type CoreSig = sig 
-
   type t 
-  
-  val length : int 
-  (** length in bytes of the encoding *)
-  
-  val to_string : t -> string 
-  (** [to_string t] returns a debugging string *)
-  
-  val of_bytes : bytes -> int -> t 
-  (** [of_bytes bytes pos] decodes a value of type [t] in [bytes] starting 
-      at [pos]. Undefined behavior is [bytes] length is less than [pos + 8] *)
-  
-  val to_bytes : t -> bytes -> int -> unit 
-  (** [to_bytes t bytes pos] encoded [t] in [bytes] starting at [pos]. 
-      
-      Undefined behavior if [bytes] length is less than [pos + 8].  *)
-  
-  val compare : t -> t -> int 
-end 
 
+  include Dbtlk_types.Fixed_size_sig with type t := t 
+  include Dbtlk_types.Comparable_sig with type t := t 
+  include Dbtlk_types.Debug_sig with type t := t 
+end 
+  
 let byte pos bytes = 
   int_of_char (Bytes.unsafe_get bytes pos)
 

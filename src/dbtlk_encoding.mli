@@ -1,25 +1,11 @@
 (** {2 Common Interface} *)
 
 module type CoreSig = sig 
-
   type t 
-  
-  val length : int 
-  (** length in bytes of the encoding *)
-  
-  val to_string : t -> string 
-  (** [to_string t] returns a debugging string *)
-  
-  val of_bytes : bytes -> int -> t 
-  (** [of_bytes bytes pos] decodes a value of type [t] in [bytes] starting 
-      at [pos]. Undefined behavior is [bytes] length is less than [pos + 8] *)
-  
-  val to_bytes : t -> bytes -> int -> unit 
-  (** [to_bytes t bytes pos] encoded [t] in [bytes] starting at [pos]. 
-      
-      Undefined behavior if [bytes] length is less than [pos + 8].  *)
-  
-  val compare : t -> t -> int 
+
+  include Dbtlk_types.Fixed_size_sig with type t := t 
+  include Dbtlk_types.Comparable_sig with type t := t 
+  include Dbtlk_types.Debug_sig with type t := t 
 end 
 
 (** {2 Int Encoding} *)
@@ -30,11 +16,7 @@ end
     It also implements the [Fixed_size_sig] module signature which is 
     later defined.
  *)
-module Int64 : sig 
-  
-  include (CoreSig with type t = int)
-
-end (* Int64 *)
+module Int64 : CoreSig with type t = int
 
 (** {2 String Encoding} *)
 
@@ -76,8 +58,4 @@ end (* MakeFixedLengthString *)
     |   1 Byte      |            Max Length              | 
     + --------------+------------------------------------+
  *)
-module MakeMaxLengthString256 (SL:StringLength) : sig
-
-  include (CoreSig with type t = string) 
-
-end 
+module MakeMaxLengthString256 (SL:StringLength) : CoreSig with type t = string

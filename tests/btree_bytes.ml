@@ -39,9 +39,11 @@ let string_of_bytes bytes : string =
   String.concat " " (aux 0) 
 *)
 
-module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct 
+module T = Dbtlk_types 
 
-  module Internal = Btree.Make(Key)(Val)
+module Make (Key:Dbtlk_btree.Key_sig) (Val:Dbtlk_btree.Val_sig) = struct 
+
+  module Internal = Dbtlk_btree.Make(Key)(Val)
   
   let write_op_counter = ref 0 
   let read_op_counter = ref 0 
@@ -52,9 +54,9 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
     m : int;
   }
 
-  let do_read_op storage {Btree.offset;length}= 
+  let do_read_op storage {T.offset;length}= 
     incr read_op_counter;
-    (*printf "- reading block: %s" (Btree.string_of_block block);
+    (*printf "- reading block: %s" (Dbtlk_btree.string_of_block block);
      *)
     let sub = Bytes.sub storage offset length in
     (*
@@ -62,7 +64,7 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
     *)
     sub 
 
-  let do_write_op storage {Btree.offset; bytes; } = 
+  let do_write_op storage {T.offset; bytes; } = 
     incr write_op_counter;
     (*printf "- writing to offset %i%s\n" 
       offset 
@@ -77,7 +79,7 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
   let int_compare (x:int) (y:int) = Pervasives.compare x y 
 
   let do_write_ops storage  write_ops = 
-    List.sort (fun {Btree.offset = lhs; _} {Btree.offset = rhs; _} -> 
+    List.sort (fun {T.offset = lhs; _} {T.offset = rhs; _} -> 
       int_compare lhs rhs
     ) write_ops
     |>  List.iter (fun write -> do_write_op storage write) 
@@ -92,20 +94,20 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
     (storage, offset) 
 
   let rec do_res storage = function
-    | Btree.Res_done x -> (storage, x)  
-    | Btree.Res_read_data (block, k) -> 
+    | T.Res_done x -> (storage, x)  
+    | T.Res_read_data (block, k) -> 
       do_read_op storage block 
       |> k 
       |> do_res storage  
 
-    | Btree.Res_allocate (block_length, k) ->
+    | T.Res_allocate (block_length, k) ->
       let storage, offset = do_allocate storage block_length in 
       k offset |> do_res storage 
   
   let make ~m () = 
 
     let node = Internal.make ~root_file_offset:0 ~m () in 
-    let {Btree.offset; bytes;} as write_op = Internal.initialize node in 
+    let {T.offset; bytes;} as write_op = Internal.initialize node in 
     let storage = bytes in 
     assert(offset = 0); 
     do_write_op storage write_op; 

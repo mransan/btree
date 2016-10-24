@@ -1,11 +1,21 @@
-OCB_INC  += -I src/ -X js/
+OCB_INC  += -I src/ -I tests/ -X js/
 #OCB_FLAGS += -ocamlopt ocamloptp
-OCB_FLAGS += -use-ocamlfind -pkgs unix,ocaml-protoc 
+OCB_TESTS_FLAGS += -use-ocamlfind -pkgs unix
 OCB       = ocamlbuild $(OCB_FLAGS) $(OCB_INC)
 
 .PHONY: all build perf unix test js 
 
 all: build test perf
+
+# The core library dbtlk does not depend on any other 
+# packages
+
+lib.byte:
+	$(OCB) dbtlk.cma
+
+lib.native:
+	$(OCB) dbtlk.cmxa
+	$(OCB) dbtlk.cmxs
 
 perf.byte: build 
 	rm -f *.dump
@@ -42,14 +52,14 @@ test: build
 js: build
 	cd js/node_modules/btree && npm run build && time node src/btree_bytes_test.js  
 
-db: build
-	./db_test.native
+table: build
+	export OCAMLRUNPARAM="b" && ./table_test.native
 
 build:
-	$(OCB) btree_bytes_test.native
-	$(OCB) btree_bytes_perf.native
-	$(OCB) btree_unix_perf.native
-	$(OCB) db_test.native
+	$(OCB) $(OCB_TESTS_FLAGS) btree_bytes_test.native
+	$(OCB) $(OCB_TESTS_FLAGS) btree_bytes_perf.native
+	$(OCB) $(OCB_TESTS_FLAGS) btree_unix_perf.native
+	$(OCB) $(OCB_TESTS_FLAGS) table_test.native
 
 clean:
 	rm -f *.data

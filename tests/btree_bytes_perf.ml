@@ -1,4 +1,6 @@
 
+module Encoding = Dbtlk_encoding 
+
 let make_test_key_val7 s = 
   assert(String.length s = 7);
   (Printf.sprintf "0%s" s, Printf.sprintf "%s0" s) 
