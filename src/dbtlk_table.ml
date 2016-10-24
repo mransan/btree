@@ -1,3 +1,5 @@
+module Encoding = Dbtlk_encoding
+
 module type Record_sig = sig 
 
   (** {2 Record type} *) 
@@ -15,25 +17,25 @@ module type Record_sig = sig
 
   (** {2 Indices} *) 
 
-  module Key0 : Btree.Key_sig 
+  module Key0 : Dbtlk_btree.Key_sig 
 
   val index0 : t -> Key0.t  
   (** [index1 t] access the key1 for a given record *)
 
-  module Key1 : Btree.Key_sig 
+  module Key1 : Dbtlk_btree.Key_sig 
 
   val index1 : t -> Key1.t 
   (** [index1 t] access the key2 for a given record *)
 
 end  (* Record_sig  *) 
 
-module T = Types 
+module T = Dbtlk_types 
 
 (* The meta data of a table simply consists in the collection of all 
  * the index information that the table contains. 
  *
  * Index information consists in the btree root offset and the btree [m] size
- * see Btree module for more detailed information. 
+ * see Dbtlk_btree module for more detailed information. 
  *)
 module MetaData = struct 
 
@@ -82,9 +84,9 @@ end
 
 module Make(Table:Record_sig) = struct 
 
-  module Index0 = Btree.Make(Table.Key0)(Encoding.Int64)
+  module Index0 = Dbtlk_btree.Make(Table.Key0)(Encoding.Int64)
     (* stored @ index 0 in meta data *)
-  module Index1 = Btree.Make(Table.Key1)(Encoding.Int64)
+  module Index1 = Dbtlk_btree.Make(Table.Key1)(Encoding.Int64)
     (* stored @ index 1 in meta data *)
 
   type t = {

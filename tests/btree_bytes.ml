@@ -39,11 +39,11 @@ let string_of_bytes bytes : string =
   String.concat " " (aux 0) 
 *)
 
-module T = Types 
+module T = Dbtlk_types 
 
-module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct 
+module Make (Key:Dbtlk_btree.Key_sig) (Val:Dbtlk_btree.Val_sig) = struct 
 
-  module Internal = Btree.Make(Key)(Val)
+  module Internal = Dbtlk_btree.Make(Key)(Val)
   
   let write_op_counter = ref 0 
   let read_op_counter = ref 0 
@@ -56,7 +56,7 @@ module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct
 
   let do_read_op storage {T.offset;length}= 
     incr read_op_counter;
-    (*printf "- reading block: %s" (Btree.string_of_block block);
+    (*printf "- reading block: %s" (Dbtlk_btree.string_of_block block);
      *)
     let sub = Bytes.sub storage offset length in
     (*

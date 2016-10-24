@@ -3,9 +3,9 @@
 module type CoreSig = sig 
   type t 
 
-  include Types.Fixed_size_sig with type t := t 
-  include Types.Comparable_sig with type t := t 
-  include Types.Debug_sig with type t := t 
+  include Dbtlk_types.Fixed_size_sig with type t := t 
+  include Dbtlk_types.Comparable_sig with type t := t 
+  include Dbtlk_types.Debug_sig with type t := t 
 end 
 
 (** {2 Int Encoding} *)

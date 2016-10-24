@@ -39,9 +39,9 @@ module type Key_sig = sig
 
   type t 
 
-  include Types.Fixed_size_sig with type t := t 
-  include Types.Comparable_sig with type t := t 
-  include Types.Debug_sig with type t := t 
+  include Dbtlk_types.Fixed_size_sig with type t := t 
+  include Dbtlk_types.Comparable_sig with type t := t 
+  include Dbtlk_types.Debug_sig with type t := t 
 
 end (* Key *) 
 
@@ -49,7 +49,7 @@ end (* Key *)
 module type Val_sig = sig 
   type t 
 
-  include Types.Fixed_size_sig with type t := t 
+  include Dbtlk_types.Fixed_size_sig with type t := t 
 
 end (* Val *) 
 
@@ -57,7 +57,7 @@ end (* Val *)
 module Make (Key:Key_sig) (Val:Val_sig) : sig 
 
   type t = {
-    root_file_offset : Types.file_offset;
+    root_file_offset : Dbtlk_types.file_offset;
     m : int;
   }
 
@@ -82,9 +82,9 @@ module Make (Key:Key_sig) (Val:Val_sig) : sig
 
     *)
    
-  val make : root_file_offset:Types.file_offset -> m:int -> unit -> t 
+  val make : root_file_offset:Dbtlk_types.file_offset -> m:int -> unit -> t 
 
-  val initialize : t -> Types.write_op  
+  val initialize : t -> Dbtlk_types.write_op  
   (** [initialize node] return [(length, write_op)]. [length] indicates 
     * the initial diskspace requires, and [write_op] the write operation 
     * to perform. 
@@ -100,16 +100,16 @@ module Make (Key:Key_sig) (Val:Val_sig) : sig
   (** {2 Insertion} *)
 
   type insert_res_data = 
-    | Insert_res_done of (Types.file_offset option * Types.write_op list)  
+    | Insert_res_done of (Dbtlk_types.file_offset option * Dbtlk_types.write_op list)  
       (** [Insert_res_done (Some root_offset, write_ops], the key/value was 
           successfully inserted. [root_offset] is the new root offset of the 
           tree which should then be used in subsequent inserts/find/debug while 
           [write_ops] are the write operation necessary for the inserts to 
           take effect. *)
-    | Insert_res_node_split of (Key.t * Val.t * int * Types.write_op list) 
+    | Insert_res_node_split of (Key.t * Val.t * int * Dbtlk_types.write_op list) 
       (** Internal, should never be returned *)
   
-  type insert_res = insert_res_data Types.res  
+  type insert_res = insert_res_data Dbtlk_types.res  
 
   val insert : t -> Key.t -> Val.t -> insert_res
   (** [insert root_node key value] inserts the [key]/[value] pair in the 
@@ -135,13 +135,13 @@ module Make (Key:Key_sig) (Val:Val_sig) : sig
   type find_res_data = Val.t option 
   (** find result type. If [None] then no value was found. *) 
 
-  type find_res = find_res_data Types.res 
+  type find_res = find_res_data Dbtlk_types.res 
 
   val find : t -> Key.t -> find_res 
   (** [find root_node key] searches for the [key] in the B-Tree starting at 
       the [root_node] *)
 
-  type find_gt_res = Val.t list Types.res  
+  type find_gt_res = Val.t list Dbtlk_types.res  
 
   val find_gt : t -> Key.t -> int -> find_gt_res 
   (** [find_gt t key max] finds at most [max] values which are greater than [key] in 
@@ -150,7 +150,7 @@ module Make (Key:Key_sig) (Val:Val_sig) : sig
 
   (** {2 Debugging} *)
 
-  type debug_res = unit Types.res  
+  type debug_res = unit Dbtlk_types.res  
 
   val debug : t -> debug_res  
   (** [debug root_node] pretty-prints to stdout the B-Tree starting at
@@ -158,13 +158,13 @@ module Make (Key:Key_sig) (Val:Val_sig) : sig
 
   (** {2 Iteration} *)
 
-  type iter_res = unit Types.res 
+  type iter_res = unit Dbtlk_types.res 
 
   val iter : t -> (Val.t -> unit) -> iter_res 
   (** [iter root_node f] iterates over the B-Tree and applies [f] for each value 
       in the tree.  *)
 
-  type last_res = ((Key.t * Val.t) option) Types.res 
+  type last_res = ((Key.t * Val.t) option) Dbtlk_types.res 
 
   val last : t -> last_res
 

@@ -1,4 +1,4 @@
-
+module Encoding = Dbtlk_encoding 
 module String10 = Encoding.MakeFixedLengthString(struct
   let length = 10
 end) 

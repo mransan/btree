@@ -1,4 +1,4 @@
-module T = Types 
+module T = Dbtlk_types 
 
 let do_read_op fd {T.offset; length} = 
   ignore @@ Unix.lseek fd offset Unix.SEEK_SET; 
@@ -41,9 +41,9 @@ let rec do_res fd = function
   | T.Res_allocate (block_length, k) ->
     do_allocate fd block_length |> k  |>  do_res fd 
 
-module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) = struct 
+module Make (Key:Dbtlk_btree.Key_sig) (Val:Dbtlk_btree.Val_sig) = struct 
 
-  module Internal = Btree.Make(Key)(Val)
+  module Internal = Dbtlk_btree.Make(Key)(Val)
 
   type t = {
     fd : Unix.file_descr; 

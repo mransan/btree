@@ -1,3 +1,4 @@
+module Encoding = Dbtlk_encoding 
 
 module PersonTable = struct
 
@@ -27,7 +28,7 @@ module PersonTable = struct
 
 end (* PersonTable *) 
 
-module Table = Table.Make (PersonTable) 
+module Table = Dbtlk_table.Make (PersonTable) 
 
 let next_person =  
   let counter = ref 0 in 

@@ -1,5 +1,6 @@
+module Encoding = Dbtlk_encoding
 module Int = Encoding.Int64
-module T   = Types
+module T   = Dbtlk_types
 
 module type Debug_sig = sig
   type t 
@@ -30,9 +31,9 @@ module type Val_sig = sig
   include Fixed_size_sig with type t := t 
 end 
 
-let make_block ~offset ~length () = Types.{offset; length; } 
+let make_block ~offset ~length () = T.{offset; length; } 
 
-let make_write_op ~offset ~bytes () = Types.{offset; bytes} 
+let make_write_op ~offset ~bytes () = T.{offset; bytes} 
 
 (** This module provide similar interface as [Array] module for a 
     [bytes] array containing serialized [Fixed_size_sig] values. 
@@ -40,7 +41,7 @@ let make_write_op ~offset ~bytes () = Types.{offset; bytes}
 module FS_array(FS:Fixed_size_sig) =  struct 
 
   type t = {
-    offset: Types.file_offset;  (* where in [byte] does the array starts *) 
+    offset: T.file_offset;  (* where in [byte] does the array starts *) 
     bytes: bytes; (* contains [Fixed_size_sig] values starting at [offset] *) 
   } 
 

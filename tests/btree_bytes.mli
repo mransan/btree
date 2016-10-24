@@ -3,7 +3,7 @@
     For testing only as it requires only in memory setup.
   *) 
 
-module Make (Key:Btree.Key_sig) (Val:Btree.Val_sig) : sig 
+module Make (Key:Dbtlk_btree.Key_sig) (Val:Dbtlk_btree.Val_sig) : sig 
 
   type t 
 
