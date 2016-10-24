@@ -15,10 +15,15 @@ module type Record_sig = sig
 
   (** {2 Indices} *) 
 
+  module Key0 : Btree.Key_sig 
+
+  val index0 : t -> Key0.t  
+  (** [index1 t] access the key1 for a given record *)
+
   module Key1 : Btree.Key_sig 
 
-  val index1 : t -> Key1.t  
-  (** [index1 t] access the key1 for a given record *)
+  val index1 : t -> Key1.t 
+  (** [index1 t] access the key2 for a given record *)
 
 end  (* Record_sig  *) 
 
@@ -44,6 +49,7 @@ module MetaData = struct
   let length = Encoding.Int64.length * (2 * max_number_of_indices + 1)  
 
   let to_bytes t bytes pos = 
+    assert(Array.length t <= max_number_of_indices);
     Encoding.Int64.to_bytes (Array.length t) bytes pos; 
     let pos = pos + Encoding.Int64.length in 
 
@@ -56,6 +62,7 @@ module MetaData = struct
 
   let of_bytes bytes pos = 
     let n = Encoding.Int64.of_bytes bytes pos in 
+    assert(n <= max_number_of_indices);
     let pos = pos + Encoding.Int64.length in
 
     let rec aux pos = function 
@@ -75,18 +82,16 @@ end
 
 module Make(Table:Record_sig) = struct 
 
-  module RecordIDIndex = Btree.Make(Encoding.Int64)(Encoding.Int64) 
+  module Index0 = Btree.Make(Table.Key0)(Encoding.Int64)
     (* stored @ index 0 in meta data *)
-
   module Index1 = Btree.Make(Table.Key1)(Encoding.Int64)
     (* stored @ index 1 in meta data *)
 
   type t = {
-    mutable last_record_id : int; 
     metadata : MetaData.t; 
   }
 
-  let btree_m = 41
+  let btree_m = 31
 
   (* --- DB Meta Data ---   
    *
@@ -105,12 +110,12 @@ module Make(Table:Record_sig) = struct
       T.res_done @@ MetaData.of_bytes db_meta_bytes 0 
     )
   
-  let record_id_btree_of_metadata metadata = 
+  let index0_btree_of_metadata metadata = 
     let {
       MetaData.btree_root_offset; 
       btree_m;
     } = metadata.(0) in 
-    RecordIDIndex.make ~root_file_offset:btree_root_offset ~m:btree_m ()
+    Index0.make ~root_file_offset:btree_root_offset ~m:btree_m ()
 
   let index1_btree_of_metadata metadata = 
     let {
@@ -121,44 +126,31 @@ module Make(Table:Record_sig) = struct
 
   let make_empty () =  
     
-    let last_record_id = 0 in 
-
-    let record_id_index_info = MetaData.{
+    let index0_index_info = MetaData.{
       btree_root_offset = MetaData.length; 
       btree_m;
     } in 
 
     let index1_index_info = MetaData.{
-      btree_root_offset = MetaData.length + RecordIDIndex.node_length_of_m btree_m; 
+      btree_root_offset = MetaData.length + Index0.node_length_of_m btree_m; 
       btree_m;
     } in 
 
-    let metadata = [| record_id_index_info; index1_index_info |] in 
+    let metadata = [| index0_index_info; index1_index_info |] in 
     
     let write_ops = 
       (write_db_meta metadata) :: 
-      (RecordIDIndex.initialize (record_id_btree_of_metadata metadata)) ::
+      (Index0.initialize (index0_btree_of_metadata metadata)) ::
       (Index1.initialize (index1_btree_of_metadata metadata)) :: []
     in
     (
-      {last_record_id; metadata;}, 
+      {metadata;}, 
       write_ops
     )
   
   let make_from_file () = 
-  
-    read_db_meta () |> T.res_bind (fun metadata -> 
-  
-      let res = 
-        let btree = record_id_btree_of_metadata metadata in 
-        RecordIDIndex.last btree
-      in 
-      res |> T.res_map (function 
-        | None ->
-          {last_record_id = 0; metadata; }
-        | Some (last_record_id, _) -> 
-          {last_record_id; metadata;}
-      )
+    read_db_meta () |> T.res_map (fun metadata -> 
+      {metadata}
     )
   
   let append_record record = 
@@ -203,21 +195,20 @@ module Make(Table:Record_sig) = struct
     let metadata = db.metadata in
   
     append_record record |> T.res_bind (fun record_offset ->
-      let record_id = db.last_record_id + 1 in
 
-      let btree = record_id_btree_of_metadata metadata in 
-      RecordIDIndex.append btree record_id record_offset
+      let btree = index0_btree_of_metadata metadata in 
+      Index0.append btree (Table.index0 record) record_offset
       |> T.res_map (fun append_res ->
         match append_res with
-        | RecordIDIndex.Insert_res_done (None, write_ops) ->  (false, write_ops) 
-        | RecordIDIndex.Insert_res_done (Some record_id_bro, write_ops) -> 
+        | Index0.Insert_res_done (None, write_ops) ->  (false, write_ops) 
+        | Index0.Insert_res_done (Some record_id_bro, write_ops) -> 
           MetaData.set_btree_root_offset metadata 0 record_id_bro; 
           (true, write_ops)
         | _ -> assert(false)
       )
       |> T.res_bind (fun (write_meta_data, write_ops)-> 
         let btree = index1_btree_of_metadata metadata in 
-        Index1.insert btree (Table.index1 record) record_id
+        Index1.insert btree (Table.index1 record) record_offset
         |> T.res_map (fun insert_res -> 
           match insert_res with
           | Index1.Insert_res_done (None, write_ops') ->  
@@ -229,7 +220,6 @@ module Make(Table:Record_sig) = struct
         )
       )
       |> T.res_map (fun (write_meta_data, write_ops) ->
-        db.last_record_id <- record_id; 
         let write_ops = 
           if write_meta_data
           then write_db_meta metadata :: write_ops 
@@ -250,36 +240,28 @@ module Make(Table:Record_sig) = struct
 
        let rec aux = function
          | [] -> T.res_done () 
-         | record_id :: tl -> 
-           RecordIDIndex.find (record_id_btree_of_metadata db.metadata) record_id
-           |> T.res_bind (function
-             | None -> assert(false) 
-             | Some record_offset -> 
-               read_record record_offset
-               |> T.res_bind (fun record -> 
-                   (*
-                 Printf.printf 
-                     ("Record Index: %010i -> " ^^ 
-                      "Record Offset: %010i -> " ^^ 
-                      "Record: %s\n")
-                     record_id record_offset (Table.to_string record); 
-                 *)
-                 aux tl 
-               )
+         | record_offset :: tl -> 
+           read_record record_offset
+           |> T.res_bind (fun record -> 
+               (*
+             Printf.printf 
+                 ("Record Index: %010i -> " ^^ 
+                  "Record Offset: %010i -> " ^^ 
+                  "Record: %s\n")
+                 record_id record_offset (Table.to_string record); 
+             *)
+             let _ = record in 
+             aux tl 
            )
        in
        aux (List.rev !all_records_ids) 
     )
   
-  let to_string {last_record_id; metadata} = 
-
-    let { MetaData.btree_root_offset = record_id_bro; _} = metadata.(0) in 
+  let to_string {metadata} = 
+    let { MetaData.btree_root_offset = index0_bro; _} = metadata.(0) in 
     let { MetaData.btree_root_offset = index1_bro; _} = metadata.(1) in 
     Printf.sprintf 
-        ("\n- last_record_id: %i" ^^ 
-         "\n- record_id_bro: %i" ^^ 
+        ("\n- index0_bro: %i" ^^ 
          "\n- index1_bro: %i") 
-        last_record_id record_id_bro index1_bro  
-  
-  let close _ =  ()
+        index0_bro index1_bro  
 end 

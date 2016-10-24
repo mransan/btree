@@ -15,11 +15,15 @@ module PersonTable = struct
     let decoder = Pbrt.Decoder.of_bytes bytes in 
     Table_test_pb.decode_person decoder
 
-  module Key1 = Encoding.MakeMaxLengthString256(struct 
+  module Key0 = Encoding.MakeMaxLengthString256(struct 
     let length = 64
   end) 
 
-  let index1 {Table_test_pb.last_name; _} = last_name 
+  let index0 {Table_test_pb.last_name; _} = last_name 
+  
+  module Key1 = Key0 
+
+  let index1 {Table_test_pb.first_name; _} = first_name 
 
 end (* PersonTable *) 
 
@@ -55,7 +59,7 @@ let insert {db;fd} record =
   |> Btree_unix.do_res fd 
   |> Btree_unix.do_write_ops fd  
 
-let close {db;fd} = 
+let close {fd; _ } = 
   Unix.close fd  
 
 let to_string {db; _ } = 
@@ -66,7 +70,7 @@ let debug {db; fd } =
 
 let () = 
   let t0 = Unix.gettimeofday () in
-  let n = 1_000_000 in 
+  let n = 200_000 in 
 
   let rec aux db = function
     | 0 -> close db;

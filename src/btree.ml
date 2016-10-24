@@ -30,7 +30,6 @@ module type Val_sig = sig
   include Fixed_size_sig with type t := t 
 end 
 
-
 let make_block ~offset ~length () = Types.{offset; length; } 
 
 let make_write_op ~offset ~bytes () = Types.{offset; bytes} 

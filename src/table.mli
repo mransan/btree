@@ -16,13 +16,17 @@ module type Record_sig = sig
 
   (** {2 Indices} *) 
 
-  module Key1 : Btree.Key_sig 
+  module Key0 : Btree.Key_sig 
 
-  val index1 : t -> Key1.t  
+  val index0 : t -> Key0.t  
   (** [index1 t] access the key1 for a given record *)
 
-end  (* Record_sig  *) 
+  module Key1 : Btree.Key_sig 
 
+  val index1 : t -> Key1.t 
+  (** [index1 t] access the key2 for a given record *)
+
+end (* Record_sig *) 
 
 module Make(Record:Record_sig) : sig
 
