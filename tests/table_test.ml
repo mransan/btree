@@ -2,29 +2,52 @@ module Encoding = Dbtlk_encoding
 
 module PersonTable = struct
 
-  type t = Table_test_pb.person 
+  type t = {
+    first_name : string;
+    last_name : string; 
+    phone_number : string;
+  }
 
-  let to_string {Table_test_pb.first_name; _} = 
+  let to_string {first_name; _} = 
     Printf.sprintf "First Name: %s" first_name
 
-  let to_bytes person = 
-    let encoder = Pbrt.Encoder.create () in 
-    Table_test_pb.encode_person person encoder; 
-    Pbrt.Encoder.to_bytes encoder 
+  let to_bytes {first_name;last_name;phone_number} = 
+    let fn_len = String.length first_name in 
+    let ln_len = String.length last_name in 
+    let pn_len = String.length phone_number in 
+    let len = fn_len + ln_len + pn_len + 2 in 
+
+    let bytes = Bytes.create len in 
+    Bytes.blit_string first_name 0 bytes 0 fn_len; 
+    Bytes.set bytes fn_len ','; 
+    Bytes.blit_string last_name 0 bytes (fn_len + 1) ln_len; 
+    Bytes.set bytes (fn_len + 1 + ln_len) ','; 
+    Bytes.blit_string phone_number 0 bytes (fn_len + ln_len + 2) pn_len; 
+    bytes
 
   let of_bytes bytes = 
-    let decoder = Pbrt.Decoder.of_bytes bytes in 
-    Table_test_pb.decode_person decoder
+    let c1 = Bytes.index_from bytes 0 ',' in 
+    let c2 = Bytes.index_from bytes (c1 + 1) ',' in 
+    let first_name = 
+      Bytes.sub_string bytes 0 c1 
+    in
+    let last_name = 
+      Bytes.sub_string bytes (c1 + 1) (c2 - c1 - 1) 
+    in 
+    let phone_number = 
+      Bytes.sub_string bytes (c2 + 1) (Bytes.length bytes - c2 - 1) 
+    in 
+    {first_name; last_name; phone_number};;
 
   module Key0 = Encoding.MakeMaxLengthString256(struct 
     let length = 64
   end) 
 
-  let index0 {Table_test_pb.last_name; _} = last_name 
+  let index0 {last_name; _} = last_name 
   
   module Key1 = Key0 
 
-  let index1 {Table_test_pb.first_name; _} = first_name 
+  let index1 {first_name; _} = first_name 
 
 end (* PersonTable *) 
 
@@ -37,7 +60,7 @@ let next_person =
     let first_name = Printf.sprintf "Maxime_%010i" !counter in 
     let last_name = Printf.sprintf "Ransan_%010i" !counter in 
     let phone_number = "9179298071" in 
-    Table_test_pb.default_person ~first_name ~last_name ~phone_number ()
+    PersonTable.{first_name; last_name;phone_number}
 
 type db = {
   db : Table.t;
@@ -77,7 +100,7 @@ let () =
     | 0 -> close db;
     | i -> 
       let db = 
-        if i mod 100_000_000 = 0 
+        if i mod 1_000 = 0 
         then begin 
           close db; 
           open_from_file "db.data"

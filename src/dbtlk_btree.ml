@@ -2,33 +2,16 @@ module Encoding = Dbtlk_encoding
 module Int = Encoding.Int64
 module T   = Dbtlk_types
 
-module type Debug_sig = sig
-  type t 
-  val to_string : t -> string 
-end 
-
-module type Fixed_size_sig = sig 
-  type t 
-  val length : int 
-  val to_bytes : t -> bytes -> int -> unit  
-  val of_bytes : bytes -> int -> t 
-end 
-
-module type Comparable_sig = sig 
-  type t 
-  val compare : t -> t -> int
-end 
-
 module type Key_sig = sig
   type t 
-  include Fixed_size_sig with type t := t 
-  include Comparable_sig with type t := t 
-  include Debug_sig with type t := t 
+  include T.Fixed_size_sig with type t := t 
+  include T.Comparable_sig with type t := t 
+  include T.Debug_sig with type t := t 
 end 
 
 module type Val_sig = sig 
   type t 
-  include Fixed_size_sig with type t := t 
+  include T.Fixed_size_sig with type t := t 
 end 
 
 let make_block ~offset ~length () = T.{offset; length; } 
@@ -38,7 +21,7 @@ let make_write_op ~offset ~bytes () = T.{offset; bytes}
 (** This module provide similar interface as [Array] module for a 
     [bytes] array containing serialized [Fixed_size_sig] values. 
   *)
-module FS_array(FS:Fixed_size_sig) =  struct 
+module FS_array(FS:T.Fixed_size_sig) =  struct 
 
   type t = {
     offset: T.file_offset;  (* where in [byte] does the array starts *) 

@@ -250,10 +250,12 @@ module Make(Table:Record_sig) = struct
          | record_offset :: tl -> 
            read_record record_offset
            |> T.res_bind (fun record -> 
+               (*
              Printf.printf 
                  ("Record Offset: %010i -> " ^^ 
                   "Record: %s\n")
                  record_offset (Table.to_string record); 
+                *)
              let _ = record in 
              aux tl 
            )
